@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+<title>Synapse 3 控制台</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark"></div>
+      <div>
+        <div class="brand-name">Synapse 3</div>
+        <div class="brand-sub">控制台</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav" data-tab="services">服务</button>
+      <button class="nav" data-tab="approvals">审批 <span id="badge" class="badge hidden">0</span></button>
+      <button class="nav" data-tab="checkup">体检</button>
+      <button class="nav" data-tab="logs">日志</button>
+    </nav>
+    <div class="side-foot">
+      <button class="ghost" id="open-panel">打开数据面板</button>
+      <button class="ghost" id="reveal-data">数据目录</button>
+      <div class="path-line" id="path-line">…</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="tab" id="tab-services">
+      <header><h1>服务</h1><p class="sub">托管服务由本程序起停；第三方程序只做探测，不代管。</p></header>
+      <div id="svc-list" class="svc-list"></div>
+    </section>
+
+    <section class="tab hidden" id="tab-approvals">
+      <header><h1>审批</h1><p class="sub">与在 QQ 里回复「通过 / 拒绝」是同一条逻辑，两边结果一致。</p></header>
+      <div id="pending-list" class="pending-list"></div>
+      <div class="empty" id="pending-empty">当前没有挂起的审批或提问。</div>
+    </section>
+
+    <section class="tab hidden" id="tab-checkup">
+      <header><h1>环境体检</h1><p class="sub">缺什么、怎么补。第三方软件不代装。</p></header>
+      <div id="check-list" class="check-list"></div>
+    </section>
+
+    <section class="tab hidden" id="tab-logs">
+      <header>
+        <h1>日志</h1>
+        <div class="row">
+          <select id="log-filter">
+            <option value="">全部</option>
+            <option value="bridge">QQ 桥接</option>
+            <option value="panel">数据面板</option>
+            <option value="qzone">QQ 空间</option>
+            <option value="hub">Hub</option>
+          </select>
+          <button class="ghost" id="log-clear">清屏</button>
+        </div>
+      </header>
+      <pre id="log-box" class="log-box"></pre>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

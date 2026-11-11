@@ -54,6 +54,28 @@ MCP 工具集（38 个 qq_* 工具）
 
 首次启动向导会检测两者并引导配置。
 
+## 快速开始（源码运行）
+
+```bash
+# 1) 面板前端（发版必需，开发期可选）
+cd apps/panel-ui && npm ci && npm run build
+
+# 2) 总控台
+cd apps/hub && npm ci && npm start
+
+# 3) 自检
+node scripts/check-boundaries.mjs      # 边界：硬编码 / 个人信息 / 密钥
+node tests/paths.test.mjs              # 路径解析（legacy 与 v2 双布局）
+node tests/policy.test.mjs             # 审批策略
+```
+
+打包：`node scripts/build-hub.mjs --with-deps` 之后 `cd apps/hub && npm run build`。
+
+## 状态与待决
+
+- 阶段进度与验收证据：`docs/工作交接-20261112-P1-P4.md`
+- 需要拍板的事项：`DECISIONS.md`
+
 ## 许可
 
 本项目代码以 MIT 发布，见 `LICENSE`。`apps/bridge` 与 `packages/dsh-preset` 派生自

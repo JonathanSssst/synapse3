@@ -1,0 +1,51 @@
+appId: com.synapse.hub
+productName: SynapseHub
+copyright: Copyright © 2026 JonathanSssst
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+
+directories:
+  output: ../../dist/hub
+  buildResources: assets
+
+files:
+  - main.cjs
+  - preload.cjs
+  - services.cjs
+  - bridge-console.cjs
+  - firstrun.cjs
+  - renderer/**/*
+  - package.json
+  - "!**/*.map"
+
+# 运行时依赖随包放入 resources/app-root：
+#   app/{bridge,panel-server,panel-ui/dist,qzone,packages}
+#   runtime/node.exe
+extraResources:
+  - from: ../../dist/hub-payload/app
+    to: app
+  - from: ../../dist/hub-payload/runtime
+    to: runtime
+  - from: ../../extensions
+    to: extensions
+
+win:
+  target:
+    - target: portable
+      arch: [x64]
+  artifactName: SynapseHub-${version}-x64.${ext}
+  # 首发不签名：用户会看到 SmartScreen 提示，README 需明示
+  signAndEditExecutable: true
+
+portable:
+  artifactName: SynapseHub-${version}-x64.exe
+  requestExecutionLevel: user
+
+# 安装器版本（可选，CI 里用 --win nsis 构建）
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: SynapseHub-Setup-${version}.exe

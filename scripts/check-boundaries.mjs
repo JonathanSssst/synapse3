@@ -30,7 +30,7 @@ const RULES = [
   {
     id: 'personal-id',
     label: '作者个人信息（QQ 号等）',
-    re: /\b(?:3681901185|1539541945)\b/g // boundary-allow 规则定义本身
+    re: /(?<!\d)(?:3681901185|1539541945)(?!\d)/g // boundary-allow 规则定义本身
   },
   {
     id: 'secret',

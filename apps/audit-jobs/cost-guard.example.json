@@ -1,0 +1,5 @@
+{
+  "balanceWarn": 3,
+  "dailyCostWarn": 5,
+  "recoverMargin": 2
+}

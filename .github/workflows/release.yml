@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 SynapseHub
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 边界与密钥扫描
+        run: node scripts/check-boundaries.mjs
+
+      - name: 单元自检（paths / policy）
+        run: |
+          node tests/policy.test.mjs
+          node tests/paths.test.mjs
+
+      - name: 安装面板前端依赖并构建
+        working-directory: apps/panel-ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: 安装 Hub 依赖
+        working-directory: apps/hub
+        run: npm ci --no-audit --no-fund
+
+      - name: 组装载荷（含 bridge 生产依赖 + 内置 node）
+        env:
+          NODE_EXE: ${{ runner.temp }}\node\node.exe
+        run: |
+          # setup-node 提供的 node 在 PATH 中；这里显式定位它的真实路径
+          $nodePath = (Get-Command node).Source
+          Write-Host "node = $nodePath"
+          $env:NODE_EXE = $nodePath
+          node scripts/build-hub.mjs --with-deps
+        shell: pwsh
+
+      - name: 打包 portable
+        working-directory: apps/hub
+        run: npx electron-builder --config electron-builder.yml --win portable --x64
+
+      - name: 生成校验值
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/hub/*.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File -Append -Encoding utf8 dist/SHA256SUMS.txt
+          }
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapsehub-win-x64
+          path: |
+            dist/hub/*.exe
+            dist/SHA256SUMS.txt
+
+      - name: 创建 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/hub/*.exe
+            dist/SHA256SUMS.txt
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## 安装前提（本程序不打包第三方组件）
+
+            1. 安装 **DeepSeek Harness** 并登录（Agent 运行时）
+            2. 安装 **SnowLuma** 或其它 OneBot v11 网关，扫码登录 QQ
+            3. 运行 `SynapseHub-*-x64.exe`，按首启向导填写主人 QQ / 网关地址
+
+            首次运行若被 SmartScreen 拦截：更多信息 → 仍要运行。
+            校验值见 `SHA256SUMS.txt`。
