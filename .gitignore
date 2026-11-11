@@ -1,0 +1,58 @@
+# Synapse 3 · 公开仓 .gitignore
+# 原则：只入库「源码 / 文档 / 小体积素材」；依赖、构建产物、运行时数据、密钥、个人内容一律排除。
+# 注意：禁止使用 *token* 这类宽泛规则，会误伤 panel-ui/src/styles/tokens.css。
+
+# ---- 依赖 ----
+node_modules/
+
+# ---- 构建产物 ----
+dist/
+build/
+out/
+release/
+*.asar
+
+# ---- 运行时数据（由安装目录承载，永不入库）----
+data/
+backups/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.jsonl
+*.pid
+*.lock
+
+# ---- 配置实例与密钥 ----
+config/*.json
+!config/default/*.json
+config/secrets/
+secrets/
+.env
+.env.*
+cookies*.json
+console-token
+
+# ---- 个人内容（在私有仓 synapse3-data）----
+content/
+personas/
+*.private.md
+diary/
+
+# ---- 临时与备份 ----
+.tmp/
+tmp/
+*.bak
+*.bak-*
+*.old
+*.orig
+*~
+Thumbs.db
+desktop.ini
+nul
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store

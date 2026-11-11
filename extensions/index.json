@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-11-12T00:00:00+08:00",
+  "mirror": {
+    "default": "direct",
+    "options": [
+      { "id": "direct", "label": "直连 GitHub", "raw": "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}", "release": "https://github.com/{owner}/{repo}/releases/download/{tag}/{file}" },
+      { "id": "ghproxy", "label": "gh-proxy 镜像", "raw": "https://gh-proxy.com/https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}", "release": "https://gh-proxy.com/https://github.com/{owner}/{repo}/releases/download/{tag}/{file}" }
+    ]
+  },
+  "packages": []
+}

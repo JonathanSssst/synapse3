@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  boundaries:
+    name: 边界与密钥扫描
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 绝对路径 / 个人信息 / 密钥扫描
+        run: node scripts/check-boundaries.mjs
+
+      - name: 仓库内不得出现私有人设与模型
+        shell: pwsh
+        run: |
+          $bad = @('personas', 'content', 'whalemaid', 'config/secrets')
+          $hit = @()
+          foreach ($p in $bad) {
+            if (Test-Path $p) { $hit += $p }
+          }
+          if ($hit.Count -gt 0) {
+            Write-Error "公开仓出现了禁止目录：$($hit -join ', ')"
+            exit 1
+          }
+          Write-Host '私有人设 / 模型 / 密钥目录均不存在，通过'
