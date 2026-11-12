@@ -76,8 +76,15 @@ function copyTree(src, dst) {
   }
   if (!DRY) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(src, dst); break; }
-      catch (e) {
+      try {
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        // 不要用 copyFileSync：Windows 上它走 CopyFileEx，会连源文件的**安全描述符**
+        // 一起复制。跨卷复制且进程没有 SeSecurityPrivilege 时，目标会得到一个
+        // **空 DACL**（等于谁都不可读写），桥接随后写状态文件就报 EPERM。
+        // 用「先读出内容、再新建写入」的方式，让目标文件按父目录继承正常 ACL。
+        fs.writeFileSync(dst, fs.readFileSync(src), { flag: 'w' });
+        break;
+      } catch (e) {
         if (attempt === 1) failures.push(`${src} → ${dst}: ${e.code || e.message}`);
       }
     }
@@ -138,3 +145,30 @@ for (const [k, v] of Object.entries(stats)) {
 console.log(rows.join('\n'));
 if (failures.length) { console.log(`\n⚠️ 失败 ${failures.length} 项：`); failures.slice(0,10).forEach(f=>console.log('  '+f)); }
 console.log(`\n合计 ${totalFiles} 个文件 / ${(totalBytes / 1048576).toFixed(1)} MB${DRY ? '（dry-run，未复制）' : ''}`);
+
+// ── 4. 权限自检（仅 Windows）─────────────────────────────────────────────────
+// 迁移最容易留下的坑：目标文件 ACL 异常，读得到但写不了，进程跑起来才报 EPERM。
+// 迁完就扫一遍，别等运行期才发现。
+if (!DRY && process.platform === 'win32') {
+  const unwritable = [];
+  const scan = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { scan(p); continue; }
+      if (!e.isFile()) continue;
+      try { const fd = fs.openSync(p, 'r+'); fs.closeSync(fd); }
+      catch (err) { unwritable.push(`${err.code} ${path.relative(ROOT, p)}`); }
+    }
+  };
+  scan(path.join(ROOT, 'data'));
+  scan(path.join(ROOT, 'config'));
+  if (unwritable.length) {
+    console.log(`\n⚠️ 权限自检：${unwritable.length} 个文件不可写（进程会报 EPERM）`);
+    unwritable.slice(0, 10).forEach((x) => console.log('  ' + x));
+    console.log('  修复：把文件内容读出→新建→替换（不要用 copy），或对其父目录重置 ACL。');
+  } else {
+    console.log('\n权限自检：data/ 与 config/ 全部可读写 ✅');
+  }
+}

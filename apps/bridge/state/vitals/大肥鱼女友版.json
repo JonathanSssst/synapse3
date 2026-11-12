@@ -1,11 +1,11 @@
 {
   "role": "大肥鱼女友版",
-  "energy": 60,
-  "satiety": 50,
-  "mood": 55,
-  "health": 80,
-  "lastTickAt": 1794459256244,
+  "energy": 57.641299999999994,
+  "satiety": 47.051624999999994,
+  "mood": 31.372212709466105,
+  "health": 80.08845125,
+  "lastTickAt": 1794461379074,
   "createdAt": 1794459256244,
   "sleep": false,
-  "updatedAt": "2026-11-12T04:54:16.244Z"
+  "updatedAt": "2026-11-12T05:29:39.074Z"
 }
