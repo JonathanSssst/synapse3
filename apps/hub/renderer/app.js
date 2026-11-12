@@ -38,6 +38,7 @@ function renderServices(list) {
     if (s.pid) meta.push(`pid ${s.pid}`);
     if (s.restarts) meta.push(`重启 ${s.restarts} 次`);
     if (s.error) meta.push(s.error);
+    if (s.detail) meta.push(s.detail);
 
     el.innerHTML = `
       <span class="dot ${s.status}"></span>

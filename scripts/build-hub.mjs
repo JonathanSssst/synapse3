@@ -47,12 +47,21 @@ for (const item of ['src', 'plugins', 'dsh', 'roles', 'scripts', 'assets', 'publ
 for (const item of ['package.json', 'package-lock.json', 'config.example.json', 'README.md', 'LICENSE', 'RULES.md']) {
   cp(path.join(bridgeSrc, item), path.join(bridgeDst, item));
 }
-if (withDeps) {
+// 依赖必须随包：打包后的 bridge 在 asar 外独立运行，找不到 node_modules 就会直接
+// ERR_MODULE_NOT_FOUND（这次就是 js-yaml）。源码树里 apps/bridge/node_modules 是迁移期
+// 指向旧树的符号链接，cp() 的 dereference 会把真实文件复制进来，顺带解除对旧树的依赖。
+// 不跑 npm ci：离线也能构建，且不会破坏源目录那个符号链接。
+const bridgeNm = path.join(bridgeSrc, 'node_modules');
+if (fs.existsSync(bridgeNm)) {
+  cp(bridgeNm, path.join(bridgeDst, 'node_modules'));
+} else if (withDeps) {
   log('安装 bridge 生产依赖…');
   execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm',
     ['ci', '--omit=dev', '--no-audit', '--no-fund'],
     { cwd: bridgeSrc, stdio: 'inherit', shell: process.platform === 'win32' });
-  cp(path.join(bridgeSrc, 'node_modules'), path.join(bridgeDst, 'node_modules'));
+  cp(bridgeNm, path.join(bridgeDst, 'node_modules'));
+} else {
+  throw new Error('缺少 apps/bridge/node_modules：先 npm ci，或加 --with-deps 自动安装');
 }
 
 // ── 3. panel-server / qzone ────────────────────────────────────────────────
@@ -96,6 +105,15 @@ must(path.join(OUT, 'app', 'bridge', 'src', 'bridge.js'), '桥接入口');
 must(path.join(OUT, 'app', 'panel-server', 'server.mjs'), '面板入口');
 if (!allowMissingUi) must(path.join(OUT, 'app', 'panel-ui', 'dist', 'index.html'), '面板前端');
 must(path.join(OUT, 'packages', 'paths', 'index.mjs'), 'paths 包');
+
+// 依赖自检：光看"node_modules 目录存在"不够，符号链接复制失败时目录可能还在但里面是空的。
+// 逐个核对 package.json 里声明的生产依赖，缺一个就让构建直接失败，
+// 而不是等用户装完 exe 才在启动时看到 ERR_MODULE_NOT_FOUND。
+const bridgeDeps = JSON.parse(fs.readFileSync(path.join(bridgeSrc, 'package.json'), 'utf8')).dependencies || {};
+for (const name of Object.keys(bridgeDeps)) {
+  must(path.join(OUT, 'app', 'bridge', 'node_modules', name, 'package.json'), `桥接依赖 ${name}`);
+}
+log(`桥接依赖自检通过：${Object.keys(bridgeDeps).length} 个`);
 
 for (const f of [
   path.join(OUT, 'app', 'bridge', 'src', 'bridge.js'),

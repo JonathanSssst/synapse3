@@ -277,10 +277,11 @@ if (!gotLock) {
     if (win && !win.isDestroyed()) {
       win.webContents.send('hub:services', sup ? sup.snapshot() : []);
     }
-    // 开机自启进来时窗口是隐身的，如果只挂托盘不起服务，用户会以为机器人活着。
-    // 这里把上次该跑的服务拉起来；已有端口在监听的会自己跳过。
-    if (START_HIDDEN && sup) {
-      try { await sup.startAutos(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `自启拉起服务失败：${e.message}` }); }
+    // Hub 接管服务编排：不管怎么启动（开机自启 / 手动双击），都把该在线的
+    // bridge / panel 拉起来。早期版本只在 --autostart 时拉，手动双击 exe 后
+    // 托盘亮着但服务不上线，很迷惑。已在监听端口的实例一律跳过，不抢。
+    if (sup) {
+      try { await sup.startAutos(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `自动拉起服务失败：${e.message}` }); }
     }
   });
 

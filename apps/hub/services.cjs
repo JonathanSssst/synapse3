@@ -146,6 +146,7 @@ class Supervisor {
   async refresh() {
     for (const d of this.defs) {
       const st = this.state.get(d.id) || {};
+      st.detail = '';  // 每次重算，避免上一轮的说明残留到这一轮
       if (d.kind === 'external') {
         if (d.id === 'snowluma') {
           // 深层探测：端口在 ≠ 能用。卡死时 TCP 依然连得上，但 /get_status 没响应。
@@ -177,6 +178,11 @@ class Supervisor {
       } else if (d.port) {
         const up = await probe(d.port);
         st.status = up ? 'up' : (this.children.has(d.id) ? 'starting' : 'down');
+        // 端口在、但不是我起的 —— 是别人（旧目录的启动脚本 / 手动开的终端）
+        // 在服务。重启时会撞端口，所以要在界面上说清楚，别让人以为已经接管了。
+        if (up && !this.children.has(d.id)) {
+          st.detail = `端口 ${d.port} 由外部进程占用（Hub 未托管）`;
+        }
       } else {
         // 无端口服务（qzone）用 pid 文件 + 进程存活判断，避免"明明在跑却显示未运行"
         let alive = false;
@@ -206,9 +212,10 @@ class Supervisor {
     return this.defs.map((d) => ({ ...d, ...(this.state.get(d.id) || {}) }));
   }
 
-  // 开机自启进来时拉起"必须在线上"的服务。只挑 bridge / panel：
+  // 拉起"必须在线上"的服务（Hub 每次启动都调）。只挑 bridge / panel：
   // qzone 是定时发说说的，用户不一定希望每次开机就自动往外发内容。
   // 先 refresh 是为了尊重"已经在跑"的实例 —— 重复起会撞端口。
+  // 若端口被外部实例占着，状态里会写明"Hub 未托管"，由人决定要不要切过来。
   async startAutos() {
     const snap = await this.refresh();
     for (const d of snap) {
@@ -251,6 +258,10 @@ class Supervisor {
     child.stderr.on('data', pipe('err'));
 
     child.on('exit', async (code, signal) => {
+      // 重启时 stop() 会先删记录再 start()，但旧进程的 exit 事件是异步的，
+      // 完全可能晚于新进程入表。不判断归属的话，旧进程的 exit 会把新进程的
+      // children 记录一起删掉 —— 表现成"重启成功、端口也在，却显示未托管"。
+      if (this.children.get(id)?.child !== child) return;
       const stopping = rec.stopping;
       this.children.delete(id);
       this.state.set(id, { status: 'down', pid: null, since: null, restarts: this.restarts.get(id) ?? 0, error: `exit ${code ?? signal}` });
