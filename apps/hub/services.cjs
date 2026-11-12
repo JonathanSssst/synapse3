@@ -8,7 +8,7 @@
 //    （旧看守互相抢着拉起，正是 EADDRINUSE 的成因）。
 // 3. Node 运行时优先用随包的 runtime/node.exe，开发期回落到 PATH 里的 node。
 
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, execFileSync, execFile } = require('node:child_process');
 const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -36,6 +36,66 @@ function probe(port, host = '127.0.0.1', timeout = 700) {
     sock.once('error', () => finish(false));
   });
 }
+
+/**
+ * 「端口开着但进程卡死」是真实发生过的故障：SnowLuma 曾经 CPU 满载近 4 小时，
+ * 3000/3001 依然 LISTENING，但一个请求都不处理（事件循环被堵死）。
+ * 纯 TCP 探测会把这种状态报成「运行中」，正好掩盖故障，所以要对关键服务做**深层探测**。
+ */
+async function httpJson(url, { method = 'GET', token, body, timeout = 3000 } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'content-type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    return { ok: true, data: await res.json().catch(() => null) };
+  } catch (e) {
+    return { ok: false, error: e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 从桥接配置读 SnowLuma 的 HTTP 地址与 token（OneBot 鉴权用） */
+async function snowLumaEndpoint() {
+  try {
+    const p = await paths();
+    const cfg = JSON.parse(fs.readFileSync(path.join(p.CONFIG, 'bridge.json'), 'utf8'));
+    return {
+      httpUrl: cfg?.snowluma?.httpUrl || 'http://127.0.0.1:3000',
+      token: cfg?.snowluma?.accessToken || ''
+    };
+  } catch {
+    return { httpUrl: 'http://127.0.0.1:3000', token: '' };
+  }
+}
+
+/**
+ * DSH 桌面版的 API 端口每次启动都变，所以交给 scripts/detect-dsh.mjs 统一判定
+ * （按 `dsh web authentication required` 指纹扫描回环端口），避免两处各写一套逻辑。
+ */
+function detectDsh() {
+  return new Promise((resolve) => {
+    const script = path.join(path.resolve(__dirname, '..', '..'), 'scripts', 'detect-dsh.mjs');
+    if (!fs.existsSync(script)) return resolve(null);
+    execFile(process.execPath, [script, '--json'], { timeout: 20000, windowsHide: true }, (err, stdout) => {
+      if (err) return resolve(null);
+      try {
+        const j = JSON.parse(String(stdout));
+        resolve(j?.baseUrl || null);
+      } catch { resolve(null); }
+    });
+  });
+}
+
 
 const MAX_RESTARTS = 5;
 
@@ -67,7 +127,7 @@ class Supervisor {
         pidFile: path.join(p.QZONE_DATA, 'qzone-bot.pid'),
         desc: '定时说说 + 评论回复（无常驻端口）'
       },
-      { id: 'dsh', name: 'DSH 运行时', kind: 'external', port: 1918, desc: '第三方 Agent 运行时，只探测' },
+      { id: 'dsh', name: 'DSH 运行时', kind: 'external', port: 0, desc: '第三方 Agent 运行时；端口每次启动都变，由 detect-dsh 指纹探测' },
       { id: 'snowluma', name: 'SnowLuma 网关', kind: 'external', port: 3000, desc: 'OneBot v11 网关，只探测' }
     ];
     for (const d of this.defs) this.state.set(d.id, { status: 'unknown', restarts: 0 });
@@ -78,7 +138,33 @@ class Supervisor {
     for (const d of this.defs) {
       const st = this.state.get(d.id) || {};
       if (d.kind === 'external') {
-        st.status = (await probe(d.port)) ? 'up' : 'down';
+        if (d.id === 'snowluma') {
+          // 深层探测：端口在 ≠ 能用。卡死时 TCP 依然连得上，但 /get_status 没响应。
+          const tcp = await probe(d.port);
+          if (!tcp) {
+            st.status = 'down';
+            st.detail = '端口未监听（进程没起或已退出）';
+          } else {
+            const { httpUrl, token } = await snowLumaEndpoint();
+            const r = await httpJson(`${httpUrl.replace(/\/$/, '')}/get_status`, { method: 'POST', token, body: {}, timeout: 3000 });
+            if (!r.ok) {
+              st.status = 'hung';
+              st.detail = `端口在但接口无响应（${r.error || `HTTP ${r.status}`}）——事件循环多半卡死了，需重启`;
+            } else if (r.data?.data?.online === false) {
+              st.status = 'degraded';
+              st.detail = '网关在线，但机器人号已离线（去 WebUI 重新登录）';
+            } else {
+              st.status = 'up';
+              st.detail = r.data?.data?.good === false ? '在线（连接质量异常）' : '在线';
+            }
+          }
+        } else if (d.id === 'dsh') {
+          const found = await detectDsh();
+          st.status = found ? 'up' : 'down';
+          st.detail = found ? `API ${found}` : '未发现 DSH 实例（未启动或端口未开放）';
+        } else {
+          st.status = (await probe(d.port)) ? 'up' : 'down';
+        }
       } else if (d.port) {
         const up = await probe(d.port);
         st.status = up ? 'up' : (this.children.has(d.id) ? 'starting' : 'down');

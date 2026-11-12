@@ -1750,22 +1750,98 @@ async function main() {
   // 主人私聊回复「允许 1234」/「拒绝 1234」后才会真正上传到群文件。
   const pendingFileApprovals = new Map();
 
-  // 成本守护：cost-guard.mjs 会在余额/今日花费超阈值时写这个文件，桥接用它的结果给主动行为降档。
+  // 成本守护：余额不足 / 今日花费超阈值时把 active=true 写进 cost-guard.json，
+  // 桥接据此给主动行为降档（见下方各 costGuardActive() 调用点）。
+  // 文件位置以 STATE_DIR 为准；早期版本写在 <HOME>/state 下，保留兼容读取。
   let costGuardCache = { at: 0, active: false, reason: '' };
+  const COST_GUARD_FILE = path.join(STATE_DIR, 'cost-guard.json');
+  const COST_GUARD_LEGACY = path.join(B, 'state', 'cost-guard.json');
   function costGuardActive() {
     if (Date.now() - costGuardCache.at < 60000) return costGuardCache.active;
-    try {
-      const g = JSON.parse(fs.readFileSync(path.join(B, 'state', 'cost-guard.json'), 'utf8'));
-      costGuardCache = { at: Date.now(), active: !!g.active, reason: String(g.reason || '') };
-    } catch {
-      costGuardCache = { at: Date.now(), active: false, reason: '' };
+    for (const f of [COST_GUARD_FILE, COST_GUARD_LEGACY]) {
+      try {
+        const g = JSON.parse(fs.readFileSync(f, 'utf8'));
+        costGuardCache = { at: Date.now(), active: !!g.active, reason: String(g.reason || '') };
+        return costGuardCache.active;
+      } catch { /* 换下一个位置 */ }
     }
+    costGuardCache = { at: Date.now(), active: false, reason: '' };
     return costGuardCache.active;
+  }
+  /** 写成本守护状态（供余额守卫使用）。active=false 表示解除。 */
+  function setCostGuard(active, reason) {
+    const payload = {
+      active: !!active,
+      reason: String(reason || ''),
+      updatedAt: new Date().toISOString(),
+      balanceWarn: BALANCE_WARN_YUAN
+    };
+    try {
+      fs.mkdirSync(path.dirname(COST_GUARD_FILE), { recursive: true });
+      const tmp = `${COST_GUARD_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+      fs.renameSync(tmp, COST_GUARD_FILE);
+    } catch (error) {
+      log('成本守护：写入失败', error?.message ?? error);
+    }
+    costGuardCache = { at: Date.now(), active: !!active, reason: payload.reason };
   }
   fs.mkdirSync(STATE_DIR, { recursive: true });
   hardenStateDirAcl();
   acquireLock();
   loadState();
+
+  // ── 余额守卫：低于阈值就暂停主动唤醒 ────────────────────────────────────
+  // 目标：钱包见底时不要让桥接继续每半小时唤醒一次模型（每次都以
+  // Insufficient Balance 失败收场，既刷日志又毫无意义）。判定直接查 DeepSeek
+  // 余额接口；查不到时**不改状态**，避免网络抖动把主动行为误停。
+  const BALANCE_WARN_YUAN = Number(process.env.SYNAPSE_BALANCE_WARN ?? cfg.costGuard?.balanceWarn ?? 5);
+  const BALANCE_PROBE_MS = 15 * 60 * 1000;
+  let balanceProbeAt = 0;
+
+  async function readDeepseekBalanceYuan() {
+    try {
+      const cred = fs.readFileSync(path.join(os.homedir(), '.dsh', '.credentials.yaml'), 'utf8');
+      const apiKey = (cred.match(/sk-[A-Za-z0-9]+/) || [])[0];
+      if (!apiKey) return null;
+      const res = await fetch('https://api.deepseek.com/user/balance', {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const info = Array.isArray(data?.balance_infos) ? data.balance_infos[0] : null;
+      const total = Number(info?.total_balance ?? NaN);
+      return Number.isFinite(total) ? total : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 查余额并按阈值开/关成本守护（关闭即恢复主动唤醒）。 */
+  async function checkBalanceGuard(force = false) {
+    if (!force && Date.now() - balanceProbeAt < BALANCE_PROBE_MS) return;
+    balanceProbeAt = Date.now();
+    const yuan = await readDeepseekBalanceYuan();
+    if (yuan == null) return;
+    const low = yuan < BALANCE_WARN_YUAN;
+    const wasActive = costGuardActive();
+    if (low && !wasActive) {
+      setCostGuard(true, `DeepSeek 余额 ${yuan} 元 < ${BALANCE_WARN_YUAN} 元：已暂停主动唤醒`);
+      log(`💰 余额 ${yuan} 元，低于阈值 ${BALANCE_WARN_YUAN} 元 → 暂停主动唤醒（充值后自动解除）`);
+      appendActivity(`余额 ${yuan} 元低于阈值，暂停主动唤醒`);
+    } else if (!low && wasActive) {
+      setCostGuard(false, '');
+      log(`💰 余额已恢复（${yuan} 元）→ 解除主动唤醒暂停`);
+      appendActivity(`余额恢复 ${yuan} 元，解除主动唤醒暂停`);
+    }
+  }
+
+  // 最近一次「被新消息唤醒」的原文摘要，用于模型不可用时回一句「已收到：…」
+  const lastInboundText = new Map(); // key -> { text, at }
+
+  setTimeout(() => { checkBalanceGuard(true).catch(() => {}); }, 8000);
+  setInterval(() => { checkBalanceGuard().catch(() => {}); }, BALANCE_PROBE_MS);
 
   // ── 群聊黑话/网络用语学习（slang） ──────────────────────────────────────
   let slangEntries = [];
@@ -10614,6 +10690,15 @@ async function main() {
       compactWake = opts.wakeReason !== 'bootstrap' && !shouldSendFullWakeV2(sessionId, key);
       promptText = buildWakePromptV2(key, opts.wakeReason, { compact: compactWake });
       wakeSnapshot = buildWakeSnapshotV2(key, { compact: compactWake });
+      // 记下这次唤醒的「最后一条新消息」：万一模型侧不可用（余额不足/网络故障），
+      // 出错分支要能回一句「已收到：<原文>」，否则用户看到的是一片死寂。
+      // 只对「被消息唤醒」记录——定时唤醒（proactiveCheck/freeTime…）没有用户原文可回。
+      if (!['timeout', 'replyCheck', 'proactiveCheck', 'bootstrap', 'admin'].includes(String(opts.wakeReason))) {
+        const arr = wakeSnapshot?.messages?.length ? wakeSnapshot.messages : (wakeSnapshot?.recent || []);
+        const last = arr[arr.length - 1];
+        const snippet = String(last?.text ?? last?.content ?? last?.preview ?? '').trim().slice(0, 60);
+        if (snippet) lastInboundText.set(key, { text: snippet, at: Date.now() });
+      }
       if (wakeSnapshot) {
         const snapshotTail = compactWake
           ? '以上是新消息，先处理它们；需要补读用 qq_get_unread_messages(afterSeq=readThroughSeq)；收尾只提交你处理过的 readThroughSeq（本地 seq，不是 QQ messageId）。'
@@ -13721,6 +13806,20 @@ ${snapshotTail}`;
                 appendActivity(`${key} agent 处理出错：${safeMsg.slice(0, 80)}`);
                 // 2026-11-07：出错不再往公开会话（群/非主人私聊）发警告，避免在群里刷报错。
                 try { await notifyOwnerAgentError(key, safeMsg); } catch {}
+                // 余额不足 / 欠费：立刻落成本守护（主动唤醒马上停），并回一句
+                // 「已收到：<原文>」保活——否则用户只看到已读不回，分不清是"她不想说话"
+                // 还是"模型根本没跑"。
+                if (/insufficient balance|余额不足|arrears|欠费/i.test(msg)) {
+                  setCostGuard(true, `模型返回余额不足：${safeMsg.slice(0, 60)}`);
+                  balanceProbeAt = Date.now();
+                  log(`💰 检测到余额不足，已暂停主动唤醒，并在下次余额检查时自动判断是否恢复`);
+                  const rec = lastInboundText.get(key);
+                  if (rec && Date.now() - rec.at < 10 * 60 * 1000) {
+                    lastInboundText.delete(key);
+                    const ok = await sendToQQ(key, `已收到：${rec.text}`);
+                    log(`💰 模型不可用，回执「已收到」（${key}）${ok ? '已送达' : '发送失败'}`);
+                  }
+                }
                 // 模型返回 400/INVALID_REQUEST 多半是该会话的 DSH 会话损坏：自动摘掉映射，下次唤醒重建。
                 try { if (isBrokenSessionMessage(safeMsg)) await recoverBrokenSession(key); } catch {}
                 if (isFarewell) {
