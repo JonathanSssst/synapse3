@@ -10690,14 +10690,21 @@ async function main() {
       compactWake = opts.wakeReason !== 'bootstrap' && !shouldSendFullWakeV2(sessionId, key);
       promptText = buildWakePromptV2(key, opts.wakeReason, { compact: compactWake });
       wakeSnapshot = buildWakeSnapshotV2(key, { compact: compactWake });
-      // 记下这次唤醒的「最后一条新消息」：万一模型侧不可用（余额不足/网络故障），
+      // 记下「用户最新的一条消息」：万一模型侧不可用（余额不足/网络故障），
       // 出错分支要能回一句「已收到：<原文>」，否则用户看到的是一片死寂。
       // 只对「被消息唤醒」记录——定时唤醒（proactiveCheck/freeTime…）没有用户原文可回。
+      //
+      // ⚠️ 必须从会话状态取最新一条，不能从 wakeSnapshot 取末尾。原因：快照是
+      // 「oldest unread first + 前 N 条 + 字符预算截断」的产物，unread 积压超过
+      // wakeMessageLimit 时，快照末尾只是被选中的第 N 条旧消息（实测 unread 20 条、
+      // 上限 12 条，结果把十几条之前的旧内容当成"刚收到的话"回了出去）。
       if (!['timeout', 'replyCheck', 'proactiveCheck', 'bootstrap', 'admin'].includes(String(opts.wakeReason))) {
-        const arr = wakeSnapshot?.messages?.length ? wakeSnapshot.messages : (wakeSnapshot?.recent || []);
-        const last = arr[arr.length - 1];
-        const snippet = String(last?.text ?? last?.content ?? last?.preview ?? '').trim().slice(0, 60);
-        if (snippet) lastInboundText.set(key, { text: snippet, at: Date.now() });
+        const st = getSocialV2State(key);
+        const pool = (st.unread?.length ? st.unread : (st.recentMessages || []));
+        const last = pool[pool.length - 1];
+        const snippet = String(last?.text ?? last?.plain ?? last?.content ?? last?.preview ?? '').trim().slice(0, 60);
+        const seq = Number.isSafeInteger(last?.seq) ? last.seq : null;
+        if (snippet) lastInboundText.set(key, { text: snippet, seq, at: Date.now() });
       }
       if (wakeSnapshot) {
         const snapshotTail = compactWake
@@ -13816,8 +13823,12 @@ ${snapshotTail}`;
                   const rec = lastInboundText.get(key);
                   if (rec && Date.now() - rec.at < 10 * 60 * 1000) {
                     lastInboundText.delete(key);
-                    const ok = await sendToQQ(key, `已收到：${rec.text}`);
-                    log(`💰 模型不可用，回执「已收到」（${key}）${ok ? '已送达' : '发送失败'}`);
+                    // 注意：sendToQQ 返回的是发送链，其 resolve 值恒为 undefined，
+                    // 直接用它判断"是否送达"会永远走到失败分支（实测把成功送达记成
+                    // 「发送失败」，排查时被误导）。用 lastSendSucceeded 读真实结果。
+                    await sendToQQ(key, `已收到：${rec.text}`);
+                    const ok = lastSendSucceeded(key);
+                    log(`💰 模型不可用，回执「已收到：${rec.text}」（${key}）${ok ? '已送达' : '发送失败'}`);
                   }
                 }
                 // 模型返回 400/INVALID_REQUEST 多半是该会话的 DSH 会话损坏：自动摘掉映射，下次唤醒重建。
