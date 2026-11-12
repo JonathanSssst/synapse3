@@ -250,12 +250,21 @@ class Supervisor {
     child.stdout.on('data', pipe('out'));
     child.stderr.on('data', pipe('err'));
 
-    child.on('exit', (code, signal) => {
+    child.on('exit', async (code, signal) => {
       const stopping = rec.stopping;
       this.children.delete(id);
       this.state.set(id, { status: 'down', pid: null, since: null, restarts: this.restarts.get(id) ?? 0, error: `exit ${code ?? signal}` });
       this.onLog({ id, stream: 'hub', line: `退出（${code ?? signal}）` });
       if (stopping) return;
+
+      // 端口还被别的实例占着 → 多半是用户从旧目录起的桥接还在跑。
+      // 这种情况重试多少次都只是撞端口，白白刷日志，直接放弃。
+      if (d.port && await probe(d.port)) {
+        this.restarts.set(id, 0);
+        this.state.set(id, { status: 'up', pid: null, restarts: 0, detail: `端口 ${d.port} 由外部实例占用` });
+        this.onLog({ id, stream: 'hub', line: `端口 ${d.port} 仍被另一个实例占用，不再尝试重启` });
+        return;
+      }
 
       const attempts = (this.restarts.get(id) || 0) + 1;
       this.restarts.set(id, attempts);
@@ -291,7 +300,15 @@ class Supervisor {
     return { ok: true };
   }
 
-  restart(id) {
+  async restart(id) {
+    const d = this.defs.find((x) => x.id === id);
+    if (!d) throw new Error(`未知服务 ${id}`);
+    if (d.kind === 'external') throw new Error(`${d.name} 由第三方程序管理，请手动重启`);
+    // 端口被非托管实例占着时，新起的进程只会撞端口退出 ——
+    // 表现成"重启成功但配置没生效"。直接拒绝，把原因说清楚。
+    if (d.port && !this.children.has(id) && await probe(d.port)) {
+      throw new Error(`${d.name} 正由外部进程提供服务（端口 ${d.port} 已被占用），请先关掉它`);
+    }
     this.stop(id);
     return this.start(id);
   }

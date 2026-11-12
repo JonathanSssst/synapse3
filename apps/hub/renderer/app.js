@@ -256,10 +256,19 @@ async function saveSetup() {
     if (!res.changed) { toast('没有变化'); return; }
 
     // 配置是启动时读的，不重启桥接等于白改。
-    // 桥接如果不是本程序托管的（用户自己起的），restart 会失败 —— 这时候只提示，不算保存失败。
+    // 坑在于：桥接可能是用户自己从旧目录起的（不归本程序托管）。
+    // 这时 restart 会「成功」拉起一个新进程，但新进程撞端口自己退了，
+    // 端口仍被旧进程占着 —— 配置根本没生效。所以要回头看一眼究竟谁在服务。
     try {
       await window.hub.restart('bridge');
-      toast('已保存，桥接正在重启');
+      await new Promise((r) => setTimeout(r, 2500));
+      const snap = await window.hub.services();
+      const b = (snap || []).find((s) => s.id === 'bridge');
+      if (b && b.status === 'up' && !b.pid) {
+        toast('已保存。但桥接是外部启动的，得手动重启它才会用上新配置');
+      } else {
+        toast('已保存，桥接已重启');
+      }
     } catch (e) {
       toast(`已保存，但桥接没重启：${e.message || e}（手动重启一次才会生效）`);
     }
