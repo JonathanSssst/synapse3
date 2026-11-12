@@ -40,6 +40,13 @@ extraResources:
     to: runtime
   - from: ../../extensions
     to: extensions
+  # 首启向导的出厂模板。放在 asar 外：向导要用路径直接读它，
+  # 而 asar 内的 __dirname/../.. 会跑出 resources 之外。
+  - from: ../../config/default
+    to: config-default
+  # DSH 端口探测脚本。services 与向导共用，靠 resourcesPath 定位。
+  - from: ../../scripts/detect-dsh.mjs
+    to: runtime/detect-dsh.mjs
 
 win:
   target:

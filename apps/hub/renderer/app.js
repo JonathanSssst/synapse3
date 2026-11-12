@@ -19,7 +19,7 @@ function switchTab(tab) {
   $$('.tab').forEach((s) => s.classList.add('hidden'));
   $(`#tab-${tab}`).classList.remove('hidden');
   if (tab === 'approvals') refreshPending();
-  if (tab === 'checkup') refreshCheck();
+  if (tab === 'setup') { refreshSetup(); refreshCheck(); }
   if (tab === 'logs') refreshLogs();
 }
 
@@ -156,6 +156,143 @@ async function answer(p, text, ctl) {
   }
 }
 
+// ── 配置向导 ───────────────────────────────────────────────────────────────
+// 字段定义、校验、落盘全在主进程（firstrun.cjs）；这里只负责把 spec 画成表单、
+// 把用户填的值原样交回去。校验结果的 key 与 input 的 data-key 对应。
+
+function escapeAttr(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fieldEl(f, value) {
+  const id = `fld-${f.key}`;
+  const el = document.createElement('div');
+  el.className = 'field';
+  el.innerHTML = `
+    <div class="flabel">${escapeHtml(f.label)}${f.required ? '<span class="req">必填</span>' : ''}</div>
+    <div class="frow">
+      <input id="${id}" data-key="${escapeAttr(f.key)}"
+             type="${f.type === 'secret' ? 'password' : 'text'}"
+             value="${escapeAttr(value)}"
+             placeholder="${escapeAttr(f.placeholder || '')}"
+             spellcheck="false" autocomplete="off" />
+      ${f.detect === 'dsh' ? '<button type="button" class="ghost mini" data-detect="dsh">自动探测</button>' : ''}
+      ${f.type === 'secret' ? `<button type="button" class="ghost mini" data-reveal="${id}">显示</button>` : ''}
+    </div>
+    ${f.hint ? `<div class="fhint">${escapeHtml(f.hint)}</div>` : ''}
+    <div class="ferr" data-err="${escapeAttr(f.key)}"></div>`;
+  return el;
+}
+
+function renderForm(data) {
+  STATE.form = data;
+  const box = $('#setup-form');
+  box.innerHTML = '';
+  for (const g of data.groups) {
+    const sec = document.createElement('section');
+    sec.className = 'fgroup';
+    const head = document.createElement('div');
+    head.className = 'fg-head';
+    head.innerHTML = `<div class="fg-title">${escapeHtml(g.title)}</div><div class="fg-desc">${escapeHtml(g.desc)}</div>`;
+    sec.appendChild(head);
+    for (const f of g.fields) sec.appendChild(fieldEl(f, data.values[f.key] ?? ''));
+    box.appendChild(sec);
+  }
+  $('#setup-path').textContent = data.configPath ? `写入：${data.configPath}` : '';
+}
+
+function collectForm() {
+  const out = {};
+  $$('#setup-form input[data-key]').forEach((el) => { out[el.dataset.key] = el.value; });
+  return out;
+}
+
+function clearFormErrors() {
+  $$('#setup-form .ferr').forEach((el) => { el.textContent = ''; });
+  $$('#setup-form input').forEach((el) => el.classList.remove('bad'));
+}
+
+function showFormErrors(errors) {
+  for (const [key, msg] of Object.entries(errors || {})) {
+    const box = $(`#setup-form .ferr[data-err="${key}"]`);
+    if (box) box.textContent = msg;
+    const inp = $(`#setup-form input[data-key="${key}"]`);
+    if (inp) inp.classList.add('bad');
+  }
+  const first = $('#setup-form input.bad');
+  if (first) first.focus();
+}
+
+function setBanner(text, kind) {
+  const el = $('#setup-banner');
+  if (!text) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.textContent = text;
+  el.className = `banner ${kind || 'warn'}`;
+}
+
+async function refreshSetup() {
+  let data;
+  try { data = await window.hub.configForm(); }
+  catch (e) { setBanner(`读取配置失败：${e.message || e}`, 'bad'); return; }
+  renderForm(data);
+  setBanner(data.needsSetup
+    ? '还差关键配置：把第 1 步填完，机器人才能认出你。'
+    : '', data.needsSetup ? 'warn' : '');
+}
+
+async function saveSetup() {
+  const btn = $('#setup-save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  clearFormErrors();
+  try {
+    const res = await window.hub.configSave(collectForm());
+    if (!res || !res.ok) {
+      showFormErrors(res && res.errors);
+      toast('还有几项要改');
+      return;
+    }
+    setBanner((res.warnings || []).join('；'), res.warnings && res.warnings.length ? 'warn' : '');
+    if (!res.changed) { toast('没有变化'); return; }
+
+    // 配置是启动时读的，不重启桥接等于白改。
+    // 桥接如果不是本程序托管的（用户自己起的），restart 会失败 —— 这时候只提示，不算保存失败。
+    try {
+      await window.hub.restart('bridge');
+      toast('已保存，桥接正在重启');
+    } catch (e) {
+      toast(`已保存，但桥接没重启：${e.message || e}（手动重启一次才会生效）`);
+    }
+    refreshCheck();
+  } catch (e) {
+    toast(`保存失败：${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存';
+  }
+}
+
+async function detectDshFromForm(btn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '探测中…';
+  try {
+    const r = await window.hub.detectDsh();
+    const inp = $('#fld-dshBaseUrl');
+    if (r && r.baseUrl) {
+      if (inp) inp.value = r.baseUrl;
+      toast(`找到了：${r.baseUrl}`);
+    } else {
+      toast('没找到在跑的 DSH，先把它启动起来再点一次');
+    }
+  } catch (e) {
+    toast(`探测失败：${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
 // ── 体检 ───────────────────────────────────────────────────────────────────
 async function refreshCheck() {
   const box = $('#check-list');
@@ -251,6 +388,18 @@ $('#log-clear').addEventListener('click', () => { $('#log-box').innerHTML = ''; 
 $('#open-panel').addEventListener('click', () => window.hub.openPanel().catch((e) => toast(e.message)));
 $('#reveal-data').addEventListener('click', () => window.hub.reveal('data').catch((e) => toast(e.message)));
 $('#autostart').addEventListener('change', (e) => toggleAutoStart(e.target.checked));
+$('#setup-save').addEventListener('click', saveSetup);
+$('#setup-form').addEventListener('click', (e) => {
+  const det = e.target.closest('[data-detect]');
+  if (det) { detectDshFromForm(det); return; }
+  const rev = e.target.closest('[data-reveal]');
+  if (rev) {
+    const inp = document.getElementById(rev.dataset.reveal);
+    if (!inp) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    rev.textContent = inp.type === 'password' ? '显示' : '隐藏';
+  }
+});
 
 window.hub.onServices((list) => renderServices(list));
 window.hub.onLog(appendLog);
@@ -264,5 +413,10 @@ window.hub.onLog(appendLog);
   } catch {}
   refreshPending();
   loadAutoStart();
+  // 配置还没成形就直接把人领到配置页 —— 让他对着空白服务列表发懵没意义
+  try {
+    const f = await window.hub.configForm();
+    if (f.needsSetup) switchTab('setup');
+  } catch {}
   setInterval(() => { if (STATE.tab !== 'services') refreshPending(); }, 5000);
 })();

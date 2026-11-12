@@ -129,3 +129,54 @@ select {
   padding: 9px 14px; border-radius: 8px; font-size: 12px; opacity: 0; transition: opacity .18s;
 }
 .toast.show { opacity: 1; }
+
+/* ── 配置向导 ──────────────────────────────────────────────────────────── */
+.setup-form { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.fgroup {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 6px;
+}
+.fg-head { margin-bottom: 10px; }
+.fg-title { font-size: 13px; font-weight: 600; color: #1f1f1c; }
+.fg-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.field { display: block; padding: 8px 0 10px; border-top: 1px dashed #eceae3; }
+.fgroup .field:first-of-type { border-top: none; }
+.flabel { font-size: 12px; color: #3a3934; margin-bottom: 5px; }
+.req {
+  margin-left: 6px; font-size: 10px; color: #a32d2d; background: #fbeceb;
+  border-radius: 4px; padding: 0 4px;
+}
+.frow { display: flex; gap: 6px; align-items: center; }
+.frow input {
+  flex: 1; min-width: 0; padding: 7px 9px; font-size: 12px; color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  font-family: inherit;
+}
+.frow input:focus { outline: none; border-color: #185fa5; box-shadow: 0 0 0 3px rgba(24,95,165,.08); }
+.frow input.bad { border-color: #a32d2d; background: #fdf7f7; }
+.ghost.mini { padding: 6px 9px; font-size: 11px; border-radius: 7px; flex: 0 0 auto; }
+.fhint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.ferr { font-size: 11px; color: #a32d2d; margin-top: 3px; min-height: 0; }
+.ferr:empty { display: none; }
+
+.setup-actions {
+  display: flex; align-items: center; gap: 12px; margin: 16px 0 4px; max-width: 720px;
+}
+.primary {
+  all: unset; cursor: pointer; background: #185fa5; color: #fff; font-size: 12px;
+  padding: 8px 18px; border-radius: 8px; text-align: center;
+}
+.primary:hover { background: #0c447c; }
+.primary:disabled { opacity: .55; cursor: default; }
+.setup-note { font-size: 11px; color: #9b998f; word-break: break-all; }
+
+.banner {
+  max-width: 720px; margin-bottom: 14px; padding: 9px 12px; border-radius: 8px; font-size: 12px;
+  border: 1px solid #e7d3b3; background: #fdf6e9; color: #854f0b;
+}
+.banner.bad { border-color: #eecfcf; background: #fbeceb; color: #a32d2d; }
+
+.checkup-wrap { max-width: 720px; margin-top: 18px; }
+.checkup-wrap > summary {
+  cursor: pointer; font-size: 12px; color: var(--muted); padding: 6px 0; user-select: none;
+}
+.checkup-wrap[open] > summary { margin-bottom: 8px; }

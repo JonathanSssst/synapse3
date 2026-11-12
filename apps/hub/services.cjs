@@ -83,9 +83,19 @@ async function snowLumaEndpoint() {
  */
 function detectDsh() {
   return new Promise((resolve) => {
-    const script = path.join(path.resolve(__dirname, '..', '..'), 'scripts', 'detect-dsh.mjs');
-    if (!fs.existsSync(script)) return resolve(null);
-    execFile(process.execPath, [script, '--json'], { timeout: 20000, windowsHide: true }, (err, stdout) => {
+    // 打包后 asar 里的 __dirname/../.. 已经出了 resources，所以要多给几个候选。
+    // 打包时由 electron-builder.yml 把脚本放到 resources/runtime/detect-dsh.mjs。
+    const candidates = [
+      process.resourcesPath ? path.join(process.resourcesPath, 'runtime', 'detect-dsh.mjs') : null,
+      path.resolve(__dirname, '..', '..', 'scripts', 'detect-dsh.mjs'),
+      path.resolve(__dirname, '..', '..', '..', 'scripts', 'detect-dsh.mjs')
+    ].filter(Boolean);
+    const script = candidates.find((c) => { try { return fs.existsSync(c); } catch { return false; } });
+    if (!script) return resolve(null);
+    // 必须用内置 node 跑脚本。process.execPath 在打包后是 SynapseHub.exe，
+    // 源码模式下是 electron.exe —— 它只在 ELECTRON_RUN_AS_NODE=1 时才像 node，
+    // 而那个变量正是我们到处在清理的坑，不能依赖。
+    execFile(runtimeNode(), [script, '--json'], { timeout: 20000, windowsHide: true }, (err, stdout) => {
       if (err) return resolve(null);
       try {
         const j = JSON.parse(String(stdout));
@@ -293,4 +303,4 @@ class Supervisor {
   }
 }
 
-module.exports = { Supervisor, probe, nodeExe, MAX_RESTARTS };
+module.exports = { Supervisor, probe, nodeExe, MAX_RESTARTS, detectDsh };

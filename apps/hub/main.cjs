@@ -220,6 +220,9 @@ ipcMain.handle('hub:answer', async (_e, { key, text }) => bridgeConsole.answer(k
 ipcMain.handle('hub:bridgeStatus', async () => bridgeConsole.status());
 
 ipcMain.handle('hub:firstrun', async () => firstrun.run());
+ipcMain.handle('hub:configForm', async () => firstrun.form());
+ipcMain.handle('hub:configSave', async (_e, values) => firstrun.save(values));
+ipcMain.handle('hub:detectDsh', async () => ({ baseUrl: await firstrun.detectDshUrl() }));
 ipcMain.handle('hub:autostart', async (_e, v) => (
   typeof v === 'boolean' ? autoStartSet(v) : autoStartGet()
 ));

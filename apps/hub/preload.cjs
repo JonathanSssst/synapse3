@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('hub', {
   bridgeStatus: () => ipcRenderer.invoke('hub:bridgeStatus'),
 
   firstrun: () => ipcRenderer.invoke('hub:firstrun'),
+  configForm: () => ipcRenderer.invoke('hub:configForm'),
+  configSave: (values) => ipcRenderer.invoke('hub:configSave', values),
+  detectDsh: () => ipcRenderer.invoke('hub:detectDsh'),
   autostart: (v) => ipcRenderer.invoke('hub:autostart', v),
   logs: (filter) => ipcRenderer.invoke('hub:logs', filter),
   paths: () => ipcRenderer.invoke('hub:paths'),
