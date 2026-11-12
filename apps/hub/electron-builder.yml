@@ -16,16 +16,23 @@ files:
   - services.cjs
   - bridge-console.cjs
   - firstrun.cjs
+  - resolve-packages.cjs
   - renderer/**/*
   - package.json
   - "!**/*.map"
 
-# 运行时依赖随包放入 resources/app-root：
-#   app/{bridge,panel-server,panel-ui/dist,qzone,packages}
+# 运行时依赖随包放入 resources/ ：
+#   app/{bridge,panel-server,panel-ui/dist,qzone}
+#   packages/{paths,policy,llm-adapter}   ← asar 内代码靠 resolve-packages.cjs 定位到这里
 #   runtime/node.exe
+#   extensions
+# 注意 packages 必须单独列出：asar 内的 __dirname 是 resources/app.asar，
+# `../../packages` 会解析到 win-unpacked/packages（不存在），只能显式放到 resources/packages。
 extraResources:
   - from: ../../dist/hub-payload/app
     to: app
+  - from: ../../dist/hub-payload/packages
+    to: packages
   - from: ../../dist/hub-payload/runtime
     to: runtime
   - from: ../../extensions

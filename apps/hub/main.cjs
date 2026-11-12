@@ -7,9 +7,36 @@ const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron')
 const path = require('node:path');
 const fs = require('node:fs');
 
+// 启动追踪：打包后如果窗口没出现，唯一的线索就是"停在哪一步"。
+// 用 SYNAPSE_HUB_TRACE=1 启动，日志写到系统临时目录的 synapse-hub-trace.log。
+// 正常使用不产生任何文件。
+const TRACE_FILE = path.join(require('node:os').tmpdir(), 'synapse-hub-trace.log');
+function trace(msg) {
+  if (!process.env.SYNAPSE_HUB_TRACE) return;
+  try { fs.appendFileSync(TRACE_FILE, `${new Date().toISOString()} [${process.pid}] ${msg}\n`); } catch {}
+}
+trace(`main.cjs 开始加载 | electron=${process.versions.electron} node=${process.versions.node} | execPath=${process.execPath} | resourcesPath=${process.resourcesPath}`);
+
+// ── 数据根（必须在这里定，早于任何 paths 加载）────────────────────────────────
+// 打包后 paths 的自动探测会失效：asar 内 packages 位于 resources/packages，
+// 往上两级是 resources，既没有 apps/ 也没有 app/，于是 HOME 会落到安装目录甚至
+// portable 的临时解压目录（重启即丢）。所以由主进程显式指定，子进程继承环境变量。
+//
+//   portable 版：PORTABLE_EXECUTABLE_DIR = 用户双击的那个 exe 所在目录 → 数据留在旁边，真便携
+//   安装版：%APPDATA%\SynapseHub
+//   源码运行：不设置，交给 paths 探测（仓库根）
+if (!process.env.SYNAPSE_HOME) {
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  if (portableDir) process.env.SYNAPSE_HOME = portableDir;
+  else if (app.isPackaged) process.env.SYNAPSE_HOME = app.getPath('userData');
+}
+trace(`SYNAPSE_HOME=${process.env.SYNAPSE_HOME || '(未设置，由 paths 探测)'}`);
+
 const { Supervisor } = require('./services.cjs');
 const bridgeConsole = require('./bridge-console.cjs');
 const firstrun = require('./firstrun.cjs');
+const { loadPaths } = require('./resolve-packages.cjs');
+trace('本地模块 require 完成');
 
 let win = null;
 let sup = null;
@@ -55,7 +82,11 @@ function createWindow() {
       sandbox: false
     }
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const entry = path.join(__dirname, 'renderer', 'index.html');
+  trace(`创建窗口，入口=${entry} 存在=${fs.existsSync(entry)}`);
+  win.loadFile(entry).then(() => trace('loadFile 完成'))
+    .catch((e) => trace(`loadFile 失败：${e && e.message}`));
+  win.webContents.on('did-fail-load', (_e, code, desc) => trace(`did-fail-load ${code} ${desc}`));
   win.on('closed', () => { win = null; });
 }
 
@@ -87,11 +118,11 @@ ipcMain.handle('hub:openExternal', async (_e, url) => {
 });
 
 ipcMain.handle('hub:paths', async () => {
-  const p = await import('../../packages/paths/index.mjs');
+  const p = await loadPaths();
   return { home: p.HOME, layout: p.describe().layout, bridge: p.BRIDGE_ROOT, data: p.DATA, config: p.CONFIG };
 });
 ipcMain.handle('hub:reveal', async (_e, which) => {
-  const p = await import('../../packages/paths/index.mjs');
+  const p = await loadPaths();
   const map = { home: p.HOME, data: p.DATA, config: p.CONFIG, logs: p.LOGS, bridge: p.BRIDGE_ROOT };
   const target = map[which];
   if (!target) throw new Error('未知位置');
@@ -102,7 +133,9 @@ ipcMain.handle('hub:reveal', async (_e, which) => {
 
 // ── 生命周期 ───────────────────────────────────────────────────────────────
 
+trace('准备请求单实例锁');
 const gotLock = app.requestSingleInstanceLock();
+trace(`单实例锁：${gotLock}`);
 if (!gotLock) {
   app.quit();
 } else {
@@ -111,8 +144,10 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    trace('whenReady 触发');
     Menu.setApplicationMenu(null);
     createWindow();
+    trace(`createWindow 返回，win=${win ? 'ok' : 'null'}`);
     try { await bootSupervisor(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `编排初始化失败：${e.message}` }); }
     if (win && !win.isDestroyed()) {
       win.webContents.send('hub:services', sup ? sup.snapshot() : []);

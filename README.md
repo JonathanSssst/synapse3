@@ -61,7 +61,8 @@ MCP 工具集（38 个 qq_* 工具）
 cd apps/panel-ui && npm ci && npm run build
 
 # 2) 总控台
-cd apps/hub && npm ci && npm start
+cd apps/hub && npm ci
+start.cmd            # Windows：双击或执行，会自动清掉 ELECTRON_RUN_AS_NODE
 
 # 3) 自检
 node scripts/check-boundaries.mjs      # 边界：硬编码 / 个人信息 / 密钥
@@ -69,7 +70,15 @@ node tests/paths.test.mjs              # 路径解析（legacy 与 v2 双布局�
 node tests/policy.test.mjs             # 审批策略
 ```
 
+**两个容易卡住的点**
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| Electron 下载卡住 / `dist` 为空 | postinstall 从 GitHub 拉二进制 | `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 后重装 |
+| `npm start` 不弹窗，报 `ipcMain is undefined` | 环境里有 `ELECTRON_RUN_AS_NODE`，Electron 会以 Node 模式启动；设成空串也无效（底层用 getenv 判断） | 用 `start.cmd`，它会真正删掉这个变量 |
+
 打包：`node scripts/build-hub.mjs --with-deps` 之后 `cd apps/hub && npm run build`。
+若 electron-builder 卡在下载工具，加 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
 
 ## 状态与待决
 

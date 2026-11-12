@@ -56,3 +56,6 @@ nul
 .vscode/
 .idea/
 .DS_Store
+
+# 运行时状态：真实位置是 data/state/bridge（legacy 回落目录不入库）
+apps/bridge/state/

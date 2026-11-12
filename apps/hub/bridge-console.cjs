@@ -5,10 +5,11 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadPaths, runtimeNode } = require('./resolve-packages.cjs');
 
 let P = null;
 async function paths() {
-  if (!P) P = await import('../../packages/paths/index.mjs');
+  if (!P) P = await loadPaths();
   return P;
 }
 

@@ -12,18 +12,17 @@ const { spawn, execFileSync, execFile } = require('node:child_process');
 const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadPaths, runtimeNode } = require('./resolve-packages.cjs');
 
 let P = null;
 async function paths() {
-  if (!P) P = await import('../../packages/paths/index.mjs');
+  if (!P) P = await loadPaths();
   return P;
 }
 
 function nodeExe() {
-  if (process.env.SYNAPSE_NODE) return process.env.SYNAPSE_NODE;
-  const bundled = path.resolve(__dirname, '..', '..', 'runtime', 'node.exe');
-  try { if (fs.existsSync(bundled)) return bundled; } catch {}
-  return process.platform === 'win32' ? 'node.exe' : 'node';
+  // 路径差异与 packages 同源：源码在 <repo>/runtime，打包后在 resources/runtime。
+  return runtimeNode();
 }
 
 function probe(port, host = '127.0.0.1', timeout = 700) {
