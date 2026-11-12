@@ -77,6 +77,18 @@ const findings = [];
   for (const file of targets) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    // BOM 检查：DSH 的 YAML 加载器对带 BOM 的配置可能解析异常，且 BOM 会让
+    // 「文件差异」看起来整篇都被改过，掩盖真正的改动。源代码一律不允许 BOM。
+    if (text.charCodeAt(0) === 0xfeff) {
+      findings.push({
+        rule: 'bom',
+        label: '文件带 UTF-8 BOM',
+        file: path.relative(ROOT, file).replace(/\\/g, '/'),
+        line: 1,
+        match: 'BOM',
+      });
+      text = text.slice(1);
+    }
     if (text.length > 4 * 1024 * 1024) continue;
     const lines = text.split(/\r?\n/);
     lines.forEach((line, i) => {
@@ -113,7 +125,7 @@ const json = process.argv.includes('--json');
 if (json) {
   console.log(JSON.stringify({ ok: findings.length === 0, findings }, null, 2));
 } else if (findings.length === 0) {
-  console.log('[boundaries] 干净：无绝对路径、无个人信息、无密钥样式字符串');
+  console.log('[boundaries] 干净：无绝对路径、无个人信息、无密钥样式字符串、无 BOM');
 } else {
   const byFile = new Map();
   for (const f of findings) {
