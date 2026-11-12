@@ -11,6 +11,8 @@ build/
 out/
 release/
 *.asar
+# 根目录的 portable exe 是本地构建产物（数据根就落在它旁边，所以只能放根目录）
+/*.exe
 
 # ---- 运行时数据（由安装目录承载，永不入库）----
 data/

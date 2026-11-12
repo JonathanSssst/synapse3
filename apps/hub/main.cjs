@@ -106,6 +106,7 @@ function createWindow() {
   // Hub 一退出管道断开，子进程下一次写日志就会 EPIPE 崩溃 —— 表面"退出控制台"，
   // 实际把机器人弄死了。所以"关闭"只能是隐藏。
   win.on('close', (e) => {
+    trace(`close 事件触发 | isQuitting=${isQuitting} | 页面=${(() => { try { return win.webContents.getURL(); } catch { return '?'; } })()}`);
     if (isQuitting) return;
     e.preventDefault();
     win.hide();
