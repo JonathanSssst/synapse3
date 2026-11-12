@@ -32,6 +32,8 @@ async function checkDsh() {
   const hasHome = exists(home);
   const hasProfile = exists(path.join(home, 'profiles', 'desktop', 'cordis.patch.yml'))
     || exists(path.join(home, 'profiles', 'web', 'cordis.patch.yml'));
+  // TODO(D6)：DSH 没有稳定的版本文件（只有 app-update.yml 的 channel），
+  // 版本比对暂用"安装目录存在 + profile 就位"。等官方提供版本接口再钉 44.x。
   return {
     id: 'dsh',
     name: 'DeepSeek Harness',

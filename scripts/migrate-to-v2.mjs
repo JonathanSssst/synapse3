@@ -5,7 +5,7 @@
 // 新布局：<root>/data/{state,db,personas,...} + <root>/config/
 //
 // 用法：
-//   node scripts/migrate-to-v2.mjs --from "E:\BOT" --bridge "E:\...\qq-bridge"
+//   node scripts/migrate-to-v2.mjs --from "<旧安装根>" --bridge "<桥接目录>"
 //   node scripts/migrate-to-v2.mjs --dry        # 只报告不复制
 //
 // 安全：不删除、不移动、不覆盖已存在且更大的文件；逐项打印文件数与体积。

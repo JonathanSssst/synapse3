@@ -11,7 +11,7 @@
 | D3 policy 接线 | B 直接拦截 | ✅ 已接：`sendToQQ` 前置闸门，`policy.askMode` 默认 `deny` |
 | D4 P2 停机 | 随时可以 | ✅ 已执行：数据迁入 v2，桥接/面板已从新位置运行 |
 | D5 签名 | 不签名 | ✅ 按此执行，Release 正文写明 SmartScreen 绕过 |
-| D6 DSH 钉版 | A 钉 44.7.0 + 体检 | ✅ 体检项已加（见 firstrun.cjs），README 待补版本表 |
+| D6 DSH 钉版 | A 钉 44.7.0 + 体检 | 🟡 体检已查「安装目录 + profile」；**版本号读不到可靠来源**（只有 app-update.yml 的 channel），钉版待官方接口，已在代码留 TODO |
 | D7 imagegen | A 作为扩展包上架 | ⏸ 待有构建产物后建 Release |
 | D8 素材授权 | A 按表执行 | ✅ 生效：Live2D 与大素材未进主包 |
 | D9 旧树归档 | A 或压缩 zip | ⏸ 建议稳定一周后再动，现为回滚点 |
