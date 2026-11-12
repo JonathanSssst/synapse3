@@ -5,6 +5,8 @@ copyright: Copyright © 2026 JonathanSssst
 asar: true
 asarUnpack:
   - "**/*.node"
+  # 托盘/应用图标：asar 内的图片交给 nativeImage 读取偶发为空，显式解包最稳
+  - "assets/**"
 
 directories:
   output: ../../dist/hub
@@ -18,6 +20,7 @@ files:
   - firstrun.cjs
   - resolve-packages.cjs
   - renderer/**/*
+  - assets/*.png
   - package.json
   - "!**/*.map"
 

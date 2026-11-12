@@ -3,7 +3,7 @@
 // 职责边界：编排（起停）、观测（状态/日志）、审批（转给桥接）、体检（首启向导）。
 // 不承载业务逻辑 —— 业务都留在 bridge / panel / qzone 里，Hub 只是"看得见、按得动"。
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -88,6 +88,79 @@ function createWindow() {
     .catch((e) => trace(`loadFile 失败：${e && e.message}`));
   win.webContents.on('did-fail-load', (_e, code, desc) => trace(`did-fail-load ${code} ${desc}`));
   win.on('closed', () => { win = null; });
+  win.once('show', () => trace('窗口已显示'));
+  win.once('hide', () => trace('窗口被隐藏'));
+  setTimeout(() => {
+    try { trace(`窗口状态 可见=${win.isVisible()} 最小化=${win.isMinimized()} bounds=${JSON.stringify(win.getBounds())}`); } catch {}
+  }, 3000);
+
+  // 点 X 不退出：隐藏到托盘，服务继续跑。
+  // 为什么不是真退出：桥接/面板是 Hub 用非 detached 方式拉起的子进程，stdout 走管道；
+  // Hub 一退出管道断开，子进程下一次写日志就会 EPIPE 崩溃 —— 表面"退出控制台"，
+  // 实际把机器人弄死了。所以"关闭"只能是隐藏。
+  win.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    win.hide();
+    if (!hideHinted && tray) {
+      hideHinted = true;
+      try {
+        tray.displayBalloon({
+          title: 'Synapse 3 控制台已缩到托盘',
+          content: '机器人和面板仍在后台运行。要彻底停止，右键托盘图标选择「退出并停止服务」。',
+          noSound: true,
+        });
+      } catch { /* 某些系统不支持气泡，忽略 */ }
+    }
+  });
+}
+
+// ── 托盘常驻 ───────────────────────────────────────────────────────────────
+
+let tray = null;
+let isQuitting = false;
+let hideHinted = false;
+
+function showWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function trayIcon() {
+  const file = path.join(__dirname, 'assets', 'tray.png');
+  let img = nativeImage.createFromPath(file);
+  if (img.isEmpty()) {
+    // asar 内读不到时的兜底：同一张图的 16x16 内联版，保证托盘不会是个空白方块
+    img = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAWklEQVQ4y2Ng'
+      + 'GAWjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBSMglEwCkbBKBgFo2AU'
+      + 'jIJRMApGwSgYBaNgFIyCUTAKRsEoAAB2nAH/EQ0mQwAAAABJRU5ErkJggg==');
+  }
+  return img;
+}
+
+function createTray() {
+  try {
+    tray = new Tray(trayIcon());
+  } catch (e) {
+    trace(`托盘创建失败：${e && e.message}（关窗将直接退出）`);
+    return;
+  }
+  tray.setToolTip('Synapse 3 控制台 · 服务在后台运行');
+  const menu = Menu.buildFromTemplate([
+    { label: '显示控制台', click: showWindow },
+    { label: '打开数据面板', click: () => { shell.openExternal('http://127.0.0.1:3120/ui/').catch(() => {}); } },
+    { type: 'separator' },
+    { label: '关闭窗口后服务继续在后台运行', enabled: false },
+    { type: 'separator' },
+    { label: '退出并停止服务', click: () => { isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('click', showWindow);
+  tray.on('double-click', showWindow);
+  trace('托盘已创建');
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
@@ -146,6 +219,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     trace('whenReady 触发');
     Menu.setApplicationMenu(null);
+    createTray();
     createWindow();
     trace(`createWindow 返回，win=${win ? 'ok' : 'null'}`);
     try { await bootSupervisor(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `编排初始化失败：${e.message}` }); }
@@ -154,11 +228,17 @@ if (!gotLock) {
     }
   });
 
-  app.on('window-all-closed', () => { /* 托盘常驻语义：关窗不退出，交由托盘/菜单退出 */ app.quit(); });
+  // 有托盘时窗口全关也不退出（托盘还在，服务还要继续跑）；托盘创建失败才回落到旧行为。
+  app.on('window-all-closed', () => {
+    if (!tray) app.quit();
+  });
 
+  // 只有真正退出（托盘菜单 / 系统关机）才停服务。
   app.on('before-quit', () => {
+    isQuitting = true;
     if (pollTimer) clearInterval(pollTimer);
     if (sup) sup.stopAll();
+    if (tray) { try { tray.destroy(); } catch {} tray = null; }
   });
 }
 
