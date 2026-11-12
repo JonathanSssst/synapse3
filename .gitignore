@@ -16,6 +16,8 @@ release/
 data/
 backups/
 logs/
+# 根目录 state/ 是 legacy 回落位置，运行时一直被改写；入库只会让工作区长期是脏的
+/state/
 *.db
 *.db-wal
 *.db-shm

@@ -32,6 +32,11 @@ if (!process.env.SYNAPSE_HOME) {
 }
 trace(`SYNAPSE_HOME=${process.env.SYNAPSE_HOME || '(未设置，由 paths 探测)'}`);
 
+// 开机自启进来时只进托盘，不弹窗 —— 用户开机看到的是一个安静的后台机器人，
+// 想用控制台时点托盘图标即可。判据用命令行参数，注册表里写的就是这一串。
+const START_HIDDEN = process.argv.includes('--autostart');
+trace(`启动模式=${START_HIDDEN ? '开机自启（隐藏窗口）' : '手动双击（显示窗口）'}`);
+
 const { Supervisor } = require('./services.cjs');
 const bridgeConsole = require('./bridge-console.cjs');
 const firstrun = require('./firstrun.cjs');
@@ -75,6 +80,8 @@ function createWindow() {
     backgroundColor: '#f6f5f2',
     title: 'Synapse 3 控制台',
     autoHideMenuBar: true,
+    // 开机自启时不开窗；但托盘没建起来就必须开窗，否则用户完全失去入口。
+    show: !(START_HIDDEN && tray),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -163,6 +170,43 @@ function createTray() {
   trace('托盘已创建');
 }
 
+// ── 开机自启 ───────────────────────────────────────────────────────────────
+
+// 关窗只是缩到托盘，但重启电脑后还得手动双击一次 —— 那托盘等于白做了一半。
+// 这里写系统登录项（HKCU\...\Run），带 --autostart 参数，启动后只进托盘不弹窗。
+//
+// portable 版有个坑：exe 每次运行都会解压到临时目录，process.execPath 指向的是那份副本，
+// 把它写进注册表，第二天重启就失效了。electron-builder 为此专门注入
+// PORTABLE_EXECUTABLE_FILE，指向用户双击的那个真实 exe。
+function autoStartTarget() {
+  const portable = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (portable) return { path: portable, args: ['--autostart'] };
+  if (app.isPackaged) return { path: process.execPath, args: ['--autostart'] };
+  // 源码运行：execPath 是 electron.exe 本身，必须补上应用目录才会启动本程序
+  return { path: process.execPath, args: [app.getAppPath(), '--autostart'] };
+}
+
+function autoStartGet() {
+  if (process.platform !== 'win32') return { supported: false, enabled: false };
+  try {
+    const { path: exe, args } = autoStartTarget();
+    const s = app.getLoginItemSettings({ path: exe, args });
+    return { supported: true, enabled: Boolean(s.openAtLogin), exe };
+  } catch (e) {
+    return { supported: true, enabled: false, error: String((e && e.message) || e) };
+  }
+}
+
+function autoStartSet(enabled) {
+  if (process.platform !== 'win32') throw new Error('当前系统不支持由本程序设置开机自启');
+  const { path: exe, args } = autoStartTarget();
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: exe, args });
+  // 立刻回读：注册表写没写进去，比"调用没报错"更可信
+  const st = autoStartGet();
+  trace(`开机自启 → ${enabled ? '开' : '关'} | 写入 ${exe} ${args.join(' ')} | 回读 ${st.enabled}`);
+  return st;
+}
+
 // ── IPC ────────────────────────────────────────────────────────────────────
 
 ipcMain.handle('hub:services', async () => (sup ? await sup.refresh() : []));
@@ -175,6 +219,9 @@ ipcMain.handle('hub:answer', async (_e, { key, text }) => bridgeConsole.answer(k
 ipcMain.handle('hub:bridgeStatus', async () => bridgeConsole.status());
 
 ipcMain.handle('hub:firstrun', async () => firstrun.run());
+ipcMain.handle('hub:autostart', async (_e, v) => (
+  typeof v === 'boolean' ? autoStartSet(v) : autoStartGet()
+));
 ipcMain.handle('hub:logs', async (_e, filter) => {
   const id = filter?.id;
   return logs.filter((l) => !id || l.id === id).slice(-500);
@@ -225,6 +272,11 @@ if (!gotLock) {
     try { await bootSupervisor(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `编排初始化失败：${e.message}` }); }
     if (win && !win.isDestroyed()) {
       win.webContents.send('hub:services', sup ? sup.snapshot() : []);
+    }
+    // 开机自启进来时窗口是隐身的，如果只挂托盘不起服务，用户会以为机器人活着。
+    // 这里把上次该跑的服务拉起来；已有端口在监听的会自己跳过。
+    if (START_HIDDEN && sup) {
+      try { await sup.startAutos(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `自启拉起服务失败：${e.message}` }); }
     }
   });
 

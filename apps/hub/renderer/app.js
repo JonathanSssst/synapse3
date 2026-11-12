@@ -208,12 +208,49 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ── 开机自启 ───────────────────────────────────────────────────────────────
+// 只是把系统登录项写/删掉，真正的"自启后干什么"在主进程（--autostart → 只进托盘 + 拉起服务）。
+async function loadAutoStart() {
+  const box = $('#autostart');
+  const row = $('#autostart-row');
+  try {
+    const st = await window.hub.autostart();
+    if (!st.supported) {
+      row.classList.add('off');
+      row.title = '当前系统不支持由本程序设置开机自启';
+      box.disabled = true;
+      return;
+    }
+    box.checked = Boolean(st.enabled);
+    if (st.exe) row.title = `开机启动项：${st.exe}`;
+  } catch (e) {
+    row.classList.add('off');
+    row.title = `读取开机自启状态失败：${e.message || e}`;
+  }
+}
+
+async function toggleAutoStart(on) {
+  const box = $('#autostart');
+  box.disabled = true;
+  try {
+    const st = await window.hub.autostart(Boolean(on));
+    box.checked = Boolean(st.enabled);
+    toast(st.enabled ? '已开启：下次开机自动在后台运行' : '已关闭：下次开机需手动打开');
+  } catch (e) {
+    box.checked = !on;
+    toast(`设置失败：${e.message || e}`);
+  } finally {
+    box.disabled = false;
+  }
+}
+
 // ── 绑定 ───────────────────────────────────────────────────────────────────
 $$('.nav').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 $('#log-filter').addEventListener('change', (e) => { STATE.logFilter = e.target.value; refreshLogs(); });
 $('#log-clear').addEventListener('click', () => { $('#log-box').innerHTML = ''; });
 $('#open-panel').addEventListener('click', () => window.hub.openPanel().catch((e) => toast(e.message)));
 $('#reveal-data').addEventListener('click', () => window.hub.reveal('data').catch((e) => toast(e.message)));
+$('#autostart').addEventListener('change', (e) => toggleAutoStart(e.target.checked));
 
 window.hub.onServices((list) => renderServices(list));
 window.hub.onLog(appendLog);
@@ -226,5 +263,6 @@ window.hub.onLog(appendLog);
     $('#path-line').textContent = `${p.home} · ${p.layout === 'v2' ? '新布局' : '旧布局'}`;
   } catch {}
   refreshPending();
+  loadAutoStart();
   setInterval(() => { if (STATE.tab !== 'services') refreshPending(); }, 5000);
 })();

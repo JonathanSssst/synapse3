@@ -196,6 +196,23 @@ class Supervisor {
     return this.defs.map((d) => ({ ...d, ...(this.state.get(d.id) || {}) }));
   }
 
+  // 开机自启进来时拉起"必须在线上"的服务。只挑 bridge / panel：
+  // qzone 是定时发说说的，用户不一定希望每次开机就自动往外发内容。
+  // 先 refresh 是为了尊重"已经在跑"的实例 —— 重复起会撞端口。
+  async startAutos() {
+    const snap = await this.refresh();
+    for (const d of snap) {
+      if (!['bridge', 'panel'].includes(d.id)) continue;
+      if (d.status === 'up' || d.status === 'starting') continue;
+      try {
+        this.start(d.id, { auto: true });
+      } catch (e) {
+        this.onLog({ id: 'hub', stream: 'err', line: `自启 ${d.name} 失败：${e.message}` });
+      }
+    }
+    return this.snapshot();
+  }
+
   start(id, { auto = false } = {}) {
     const d = this.defs.find((x) => x.id === id);
     if (!d) throw new Error(`未知服务 ${id}`);
