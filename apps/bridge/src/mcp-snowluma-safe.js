@@ -6,7 +6,7 @@
 // - 发送类工具强制校验白名单：目标群/私聊必须命中 config.json 的
 //   allow.groups / allow.private，否则拒绝 —— agent 只能往被允许的地方发消息。
 // - 所有调用走 OneBot HTTP API（httpUrl + accessToken）。
-import { HOME as B, BRIDGE_ROOT } from '../../../packages/paths/index.mjs';
+import { HOME as B, BRIDGE_ROOT, STATE_DIR as GLOBAL_STATE, PERSONAS_DIR as PATHS_PERSONAS, FEATURE_DOC, PET_DATA, TMP_DIR, GEN_IMAGES_DIR, REFS_DIR as PATHS_REFS, BILI_DIR, DOUYIN_DIR, BOOKS_DIR, SURF_DIR, STUDY_DIR, CONFIG as CONFIG_DIR } from '../../../packages/paths/index.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -2771,10 +2771,10 @@ async function biliHotComments(aid) {
 }
 const FFMPEG_PATH2 = process.env.FFMPEG_PATH || 'ffmpeg';
 const PYTHON_EXE = process.env.PYTHON_EXE || 'python';
-const ASR_SCRIPT = `${B}/douyin/asr.py`;
-const OCR_SCRIPT = `${B}/douyin/ocr.py`;
-const DOUYIN_TMP = `${B}/douyin/tmp`;
-const WATCH_DBG = `${B}/douyin/logs/watch.log`;
+const ASR_SCRIPT = `${DOUYIN_DIR}/asr.py`;
+const OCR_SCRIPT = `${DOUYIN_DIR}/ocr.py`;
+const DOUYIN_TMP = `${DOUYIN_DIR}/tmp`;
+const WATCH_DBG = `${DOUYIN_DIR}/logs/watch.log`;
 
 // 视频“看内容”通用管线：下载 → 场景抽帧（失败退回均匀抽帧）→ 画面 OCR（rapidocr）→ 口播 ASR（Whisper）
 async function douyinWatchMedia(videoUrl, durationSec, count, headers = DOUYIN_HEADERS, withAsr = true, opts = {}) {
@@ -2941,7 +2941,7 @@ server.tool(
 );
 
 // ── 参考图记忆：让她自己看参考图、写印象，画画时按语境挑参考图 ─────────────
-const REFS_DIR = `${B}/imagegen/refs/流萤`;
+const REFS_DIR = `${PATHS_REFS}/默认人设`;
 const REFS_MEMORY_FILE = REFS_DIR + '/refs-memory.json';
 function listRefFiles() {
   try { return fs.readdirSync(REFS_DIR).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort(); } catch { return []; }
@@ -2971,7 +2971,7 @@ function pickRefsForPrompt(prompt, count) {
 }
 function refPreviewContent(max = 5) {
   const files = listRefFiles().slice(0, max);
-  const dir = `${B}/.tmp/ref-preview`;
+  const dir = `${TMP_DIR}/ref-preview`;
   try { fs.mkdirSync(dir, { recursive: true }); } catch {}
   const content = [];
   for (const f of files) {
@@ -3058,7 +3058,7 @@ async function snowAction(action, body) {
   return j.data;
 }
 function profileRateOk(kind, minMs = 3600000) {
-  const p = `${B}/state/profile-rate.json`;
+  const p = `${GLOBAL_STATE}/profile-rate.json`;
   let d = {};
   try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch {}
   const last = Number(d[kind] || 0);
@@ -3124,13 +3124,12 @@ server.tool(
   }
 );
 
-const BOOKS_DIR = `${B}/books`;
 function listBooks() {
   try { return fs.readdirSync(BOOKS_DIR).filter((f) => /\.txt$/i.test(f)).sort(); } catch { return []; }
 }
 server.tool(
   'qq_read_book',
-  `读一章书：从 ${B}/books 里找 txt，按“第X章”切章，返回一章文字（可指定书名/章节）。读完后可以自然地和主人聊感受。`,
+  `读一章书：从 ${BOOKS_DIR} 里找 txt，按“第X章”切章，返回一章文字（可指定书名/章节）。读完后可以自然地和主人聊感受。`,
   {
     title: z.string().optional().describe('书名关键词（可选，默认随机一本）'),
     chapter: z.number().optional().describe('第几章（从 1 开始，可选；不传随机）'),
@@ -3139,7 +3138,7 @@ server.tool(
   async ({ title, chapter }) => {
     try {
       const files = listBooks();
-      if (!files.length) return toolFail(`书库还是空的：把 txt 放进 ${B}/books 我就能读了`);
+      if (!files.length) return toolFail(`书库还是空的：把 txt 放进 ${BOOKS_DIR} 我就能读了`);
       let file = files[0];
       if (title) {
         const kw = String(title).trim();
@@ -3215,8 +3214,8 @@ server.tool(
       if (!wakeAt) return toolFail('给个时间：until="07:00" 或 minutes=30');
       if (wakeAt <= Date.now()) return toolFail('这个时间已经过去了');
       const plan = { key, wakeAt, note: String(note || '').slice(0, 200), createdAt: new Date().toISOString(), used: false };
-      fs.mkdirSync(`${B}/state`, { recursive: true });
-      fs.writeFileSync(`${B}/state/sleep-plan.json`, JSON.stringify(plan, null, 2), 'utf8');
+      fs.mkdirSync(`${GLOBAL_STATE}`, { recursive: true });
+      fs.writeFileSync(`${GLOBAL_STATE}/sleep-plan.json`, JSON.stringify(plan, null, 2), 'utf8');
       const cfg = { mode: 'diving', infinite: false, sleepUntil: new Date(wakeAt).toISOString(), triggers: { atMention: true, nameMention: true, question: true } };
       await agentApi('/api/socialV2/wake-config', { method: 'POST', body: JSON.stringify({ key, config: cfg }), headers: { 'x-agent-token': token } });
       const t = new Date(wakeAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
@@ -3226,13 +3225,13 @@ server.tool(
 );
 server.tool(
   'qq_feature_request',
-  `主人提出“能不能加个 xx 功能/我想要 xxx”时，把需求记进功能需求清单（${B}/功能需求.md），并在聊天里简短确认。`,
+  `主人提出“能不能加个 xx 功能/我想要 xxx”时，把需求记进功能需求清单（${FEATURE_DOC}），并在聊天里简短确认。`,
   { title: z.string(), detail: z.string().optional(), key: z.string(), token: z.string() },
   async ({ title, detail }) => {
     const t = String(title || '').trim();
     if (!t) return toolFail('需求标题不能为空');
     try {
-      const p = `${B}/功能需求.md`;
+      const p = `${FEATURE_DOC}`;
       fs.mkdirSync(path.dirname(p), { recursive: true });
       if (!fs.existsSync(p)) fs.writeFileSync(p, '# 功能需求清单（她记录）\n\n', 'utf8');
       const line = `- [${new Date().toISOString()}] ${t}${detail ? `：${String(detail).trim()}` : ''}`;
@@ -3272,7 +3271,7 @@ server.tool(
 // ── 书库：把看到的好书/好文章存下来 ─────────────────────────────────────────
 server.tool(
   'qq_save_book',
-  `把冲浪时看到的有意思的书/长文章存进书库（${B}/books），以后随时可以用 qq_read_book 读。`,
+  `把冲浪时看到的有意思的书/长文章存进书库（${BOOKS_DIR}），以后随时可以用 qq_read_book 读。`,
   {
     title: z.string().describe('书名/标题（用作文件名，≤40 字）'),
     url: z.string().optional().describe('网页链接（存正文；和 content 二选一）'),
@@ -3304,14 +3303,12 @@ server.tool(
       const file = path.join(BOOKS_DIR, `${name}.txt`);
       const head = `《${name}》${url ? `  来源：${url}` : ''}  保存时间：${new Date().toISOString()}\n\n`;
       fs.writeFileSync(file, head + text, 'utf8');
-      return toolText(`存好了：《${name}》（${text.length} 字），在书库 ${B}/books 里，以后用 qq_read_book 就能读。`);
+      return toolText(`存好了：《${name}》（${text.length} 字），在书库 ${BOOKS_DIR} 里，以后用 qq_read_book 就能读。`);
     } catch (error) { return toolFail(`存书失败：${error?.message ?? error}`); }
   }
 );
 
 // ── 自动冲浪：挑主题 → 搜索 → 读页面 → 存学习笔记/书库 ─────────────────────
-const SURF_DIR = `${B}/surf`;
-const STUDY_DIR = `${B}/学习`;
 function surfTopics() {
   try {
     const p = path.join(SURF_DIR, 'interests.json');
@@ -3322,7 +3319,7 @@ function surfTopics() {
 // 清单是空的：从她自己的记忆/笔记里抽一个话题，而不是塞别人的兴趣
 function surfFallbackTopics() {
   const out = [];
-  for (const f of [`${B}/bili/bili-记忆.md`, `${B}/记忆库.md`, `${B}/长记忆.md`]) {
+  for (const f of [`${BILI_DIR}/bili-记忆.md`, `${PERSONAS_DIR}/记忆库.md`, `${PERSONAS_DIR}/长记忆.md`]) {
     try {
       const text = fs.readFileSync(f, 'utf8');
       for (const line of text.split(String.fromCharCode(10))) {
@@ -3364,7 +3361,7 @@ async function bingRssSearch(query, count = 8) {
 }
 server.tool(
   'qq_surf_interests',
-  `管理你自己的冲浪兴趣清单（${B}/surf/interests.json）：list 查看、set 整体重写、add 添加、remove 删除。清单完全由你自己决定。`,
+  `管理你自己的冲浪兴趣清单（${SURF_DIR}/interests.json）：list 查看、set 整体重写、add 添加、remove 删除。清单完全由你自己决定。`,
   {
     action: z.enum(['list', 'set', 'add', 'remove']).describe('操作'),
     topics: z.array(z.string()).optional().describe('主题列表（set/add/remove 时用）'),
@@ -3426,8 +3423,8 @@ server.tool(
       fs.writeFileSync(file, body.join(String.fromCharCode(10)), 'utf8');
 
       try {
-        fs.mkdirSync(`${B}/state`, { recursive: true });
-        fs.appendFileSync(`${B}/state/surf-log.jsonl`, JSON.stringify({
+        fs.mkdirSync(`${GLOBAL_STATE}`, { recursive: true });
+        fs.appendFileSync(`${GLOBAL_STATE}/surf-log.jsonl`, JSON.stringify({
           t: new Date().toISOString(),
           type: 'run',
           topic: t,
@@ -3489,7 +3486,7 @@ function genRateOk() {
   const lastMinute = genTimes.filter((t) => now - t < 60000).length;
   return lastMinute < 2 && genTimes.length < 15;
 }
-const GEN_CHARACTER_FILE = `${B}/imagegen/character.json`;
+const GEN_CHARACTER_FILE = `${GEN_IMAGES_DIR}/character.json`;
 function readCharacterConfig() {
   try { return JSON.parse(fs.readFileSync(GEN_CHARACTER_FILE, 'utf8')); } catch { return {}; }
 }
@@ -3566,7 +3563,7 @@ async function pollinationsGenerate(prompt, width, height) {
 // ── 参考图生图：火山方舟 Seedream 4.0（支持多张参考图） ────────────────────
 function gatherRefImages(genCfg) {
   const out = [];
-  const dir = String(genCfg.refsDir || `${B}/imagegen/refs/流萤`);
+  const dir = String(genCfg.refsDir || `${GEN_IMAGES_DIR}/refs/流萤`);
   const explicit = Array.isArray(genCfg.refs) ? genCfg.refs.filter((p) => typeof p === 'string' && p) : [];
   let files = explicit;
   if (!files.length) {
@@ -3590,7 +3587,7 @@ function gatherRefImages(genCfg) {
   return out;
 }
 function gatherAllRefs(genCfg) {
-  const dir = String(genCfg.refsDir || `${B}/imagegen/refs/流萤`);
+  const dir = String(genCfg.refsDir || `${GEN_IMAGES_DIR}/refs/流萤`);
   try {
     return fs.readdirSync(dir)
       .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))

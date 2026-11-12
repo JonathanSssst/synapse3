@@ -89,7 +89,7 @@ export const BOOKS_DIR = pick(path.join(DATA, 'books'), path.join(HOME, 'books')
 export const SURF_DIR = pick(path.join(DATA, 'surf'), path.join(HOME, 'surf'));
 export const STUDY_DIR = pick(path.join(DATA, 'study'), path.join(HOME, '学习'));
 export const QZONE_ROOT = pick(path.join(HOME, 'app', 'qzone'), path.join(APPS, 'qzone'));
-export const QZONE_DATA = pick(path.join(DATA, 'qzone'), path.join(QZONE_ROOT));
+export const QZONE_DATA = pick(path.join(DATA, 'qzone'), path.join(HOME, 'qzone'), QZONE_ROOT);
 export const PET_DATA = pick(path.join(DATA, 'pet'), path.join(APPS, 'pet', 'data'));
 export const TMP_DIR = path.join(DATA, 'tmp');
 

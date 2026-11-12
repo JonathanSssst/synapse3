@@ -13,6 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,9 +53,28 @@ function* walk(dir) {
   }
 }
 
+// 只检查「将进入提交」的文件：git 跟踪列表优先，避免把 gitignore 的运行时配置
+// （config/bridge.json 之类，里面有真实 QQ 号）当成待发布内容误报。
+function trackedFiles() {
+  try {
+    const out = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    return out.split('\0').filter(Boolean)
+      .map((rel) => path.join(ROOT, rel))
+      .filter((abs) => {
+        if (!CODE_EXT.has(path.extname(abs).toLowerCase())) return false;
+        const rel = path.relative(ROOT, abs).replace(/\\/g, '/');
+        return SCAN_DIRS.some((d) => rel === d || rel.startsWith(d + '/'));
+      });
+  } catch { return null; }
+}
+
+const files = trackedFiles();
+const targets = files ?? SCAN_DIRS.flatMap((sub) => [...walk(path.join(ROOT, sub))]);
+console.log(files ? `[boundaries] 扫描 git 跟踪文件 ${targets.length} 个` : '[boundaries] 非 git 环境，扫描目录');
+
 const findings = [];
-for (const sub of SCAN_DIRS) {
-  for (const file of walk(path.join(ROOT, sub))) {
+{
+  for (const file of targets) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
     if (text.length > 4 * 1024 * 1024) continue;

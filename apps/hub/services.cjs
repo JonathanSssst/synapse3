@@ -64,7 +64,7 @@ class Supervisor {
       {
         id: 'qzone', name: 'QQ 空间', kind: 'managed', port: 0, healthPath: '',
         cwd: p.QZONE_ROOT, entry: path.join(p.QZONE_ROOT, 'qzone-bot.mjs'),
-        pidFile: path.join(p.QZONE_ROOT, 'qzone-bot.pid'),
+        pidFile: path.join(p.QZONE_DATA, 'qzone-bot.pid'),
         desc: '定时说说 + 评论回复（无常驻端口）'
       },
       { id: 'dsh', name: 'DSH 运行时', kind: 'external', port: 1918, desc: '第三方 Agent 运行时，只探测' },

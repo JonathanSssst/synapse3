@@ -5,7 +5,8 @@
 //   DSH agent 回复/提问/审批 → events.mux 事件流 → 本进程 → send_msg → QQ
 //
 // 用法：node src/bridge.js （先编辑 ../config.json）
-import { HOME as B, BRIDGE_ROOT } from '../../../packages/paths/index.mjs';
+import { evaluate as policyEvaluate, PolicyLog } from '../../../packages/policy/index.mjs';
+import { HOME as B, BRIDGE_ROOT, BRIDGE_STATE, STATE_DIR as GLOBAL_STATE, PERSONAS_DIR as PATHS_PERSONAS, FEATURE_DOC, PET_DATA, TMP_DIR, GEN_IMAGES_DIR, REFS_DIR as PATHS_REFS, BILI_DIR, DOUYIN_DIR, BOOKS_DIR, SURF_DIR, STUDY_DIR, CONFIG as CONFIG_DIR } from '../../../packages/paths/index.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -82,7 +83,21 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const STATE_DIR = path.join(ROOT, 'state');
+const policyLog = new PolicyLog(path.join(process.env.SYNAPSE_HOME || ROOT, 'data', 'logs', 'policy.jsonl'));
+// 状态目录：v2 走 <root>/data/state/bridge，legacy 回落 <bridge>/state
+const STATE_DIR = BRIDGE_STATE;
+try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch {}
+
+/** 配置文件：优先 <安装根>/config/bridge.json，回落桥接目录下 config.json。 */
+function configPath() {
+  const preferred = path.join(CONFIG_DIR, 'bridge.json');
+  const legacy = path.join(ROOT, 'config.json');
+  try {
+    if (fs.existsSync(preferred)) return preferred;
+    if (fs.existsSync(legacy)) return legacy;
+    return fs.existsSync(CONFIG_DIR) ? preferred : legacy;
+  } catch { return legacy; }
+}
 const activityLog = createActivityLog(path.join(STATE_DIR, 'activity-log.jsonl'));
 const STATE_FILE = path.join(STATE_DIR, 'sessions.json');
 const FULL_WAKE_FILE = path.join(STATE_DIR, 'full-wake-sessions.json');
@@ -766,7 +781,7 @@ function promoteGlobalMemory(key, role, category, content, extra = {}) {
     fs.writeFileSync(f, next, 'utf8');
   } catch {}
 }
-const PERSONA_MEMORY_FILES = [`${B}/记忆库.md`, `${B}/长记忆.md`];
+const PERSONA_MEMORY_FILES = [`${PATHS_PERSONAS}/记忆库.md`, `${PATHS_PERSONAS}/长记忆.md`];
 function savePersonaMemoryDocs(role) {
   if (!role) return;
   try {
@@ -852,7 +867,7 @@ function readRoleState() {
 function writeRoleState(role, mode) {
   atomicWriteJson(ROLE_STATE_FILE, { role: role ?? null, mode: mode ?? 'active' });
 }
-const PERSONAS_DIR = path.join(ROOT, 'personas');
+const PERSONAS_DIR = PATHS_PERSONAS;
 const ROLE_MAP_FILE = path.join(STATE_DIR, 'role-map.json');
 function personaFilePath(name) { return path.join(PERSONAS_DIR, sanitizeRoleName(name), 'persona.md'); }
 function personaMetaPath(name) { return path.join(PERSONAS_DIR, sanitizeRoleName(name), 'meta.json'); }
@@ -922,7 +937,7 @@ function normalizeIdList(value) {
 
 // ── 配置 ────────────────────────────────────────────────────────────────────
 function loadConfig() {
-  const p = path.join(ROOT, 'config.json');
+  const p = configPath();
   const file = readJsonSafe(p, null, true);
   if (!file || typeof file !== 'object' || Array.isArray(file)) throw new Error(`配置格式错误：${p}`);
   const cfg = {
@@ -1334,7 +1349,7 @@ const LOCK_FILE = path.join(STATE_DIR, 'bridge.lock');
  */
 function consolePortInUse() {
   try {
-    const cfg = readJsonSafe(path.join(ROOT, 'config.json'), {});
+    const cfg = readJsonSafe(configPath(), {});
     const port = Number(cfg?.consolePort) || 3100;
     if (process.platform === 'win32') {
       const out = execFileSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -2711,7 +2726,7 @@ async function main() {
   // 不进入 QQ 会话，也不依赖 DSH 插件或 MCP 工具。
   const PET_SENSE_FILE = path.join(STATE_DIR, 'pet-sense-session.json');
   const PET_SENSE_SIDS_FILE = path.join(STATE_DIR, 'pet-sense-sessions.json');
-  const PET_SENSE_ROOT = path.resolve(`${B}/desktop-pet/data/sense`);
+  const PET_SENSE_ROOT = path.resolve(`${PET_DATA}/sense`);
   // 记录所有用过的陪看会话，token 账本靠它把历史用量归到「桌宠陪看」，
   // 而不是误记到同样使用 learnerSessions 的「黑话学习」。
   let petSenseSessionIds = new Set();
@@ -4465,7 +4480,7 @@ async function main() {
         if (req.method === 'POST' && url.pathname === '/api/roles/limit') {
           const body = await readBody();
           const next = applyRoleInjectLimit(body.maxInjectChars);
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           const file = readConfigObject(configFile);
           file.role = { ...(file.role ?? {}), maxInjectChars: next };
           atomicWriteJson(configFile, file);
@@ -4890,7 +4905,7 @@ async function main() {
           const body = await readBody();
           const oldPreset = cfg.slang?.learnerPreset;
           const oldWorkspaceTitle = cfg.slang?.workspaceTitle;
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           const file = readConfigObject(configFile);
           const merged = { ...(file.slang ?? {}), ...body };
           if (typeof merged.enabled === 'boolean') merged.enabled = merged.enabled;
@@ -4972,7 +4987,7 @@ async function main() {
         if (req.method === 'POST' && url.pathname === '/api/whitelist') {
           const body = await readBody();
           const toNum = (arr) => Array.isArray(arr) ? [...new Set(arr.map((x) => Number(String(x).trim())).filter((n) => Number.isFinite(n)))] : undefined;
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           // fail-fast：配置文件损坏时直接 500，绝不回写，避免把整个配置清成只剩 allow/deny/ownerQQ
           const file = readConfigObject(configFile);
           const allow = {
@@ -5059,7 +5074,7 @@ async function main() {
           let effort;
           try { effort = normalizeReasoningEffort(body.reasoningEffort); }
           catch (error) { sendJson({ ok: false, error: error?.message ?? '思考强度无效' }, 400); return; }
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           // fail-fast：配置损坏时直接 500，绝不回写（与白名单接口同语义）
           const file = readConfigObject(configFile);
           file.dsh = { ...(file.dsh ?? {}), reasoningEffort: effort };
@@ -5099,7 +5114,7 @@ async function main() {
             sendJson({ ok: stateDirHardened === true, hardened: stateDirHardened, path: STATE_DIR });
             return;
           }
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           const file = readConfigObject(configFile);
           const next = { ...(file.security ?? {}), ...body };
           if (typeof next.interceptNotify === 'boolean') next.interceptNotify = next.interceptNotify;
@@ -5131,7 +5146,7 @@ async function main() {
             sendJson({ ok: false, error: '控制台访问令牌只能包含字母、数字、下划线或短横线' }, 400);
             return;
           }
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           const file = readConfigObject(configFile);
           // 手动令牌写入 config.json（用户可见、可再改）；随机令牌写入 state/console-token 并清空 config 中的手动值。
           file.consoleToken = generated ? '' : newToken;
@@ -5200,7 +5215,7 @@ async function main() {
         }
         if (req.method === 'POST' && url.pathname === '/api/social') {
           const body = await readBody();
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           // fail-fast：配置文件损坏时直接 500，绝不回写，避免把整个配置清成只剩 social
           const file = readConfigObject(configFile);
           const merged = { ...(file.social ?? {}), ...body };
@@ -5327,7 +5342,7 @@ async function main() {
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/config') {
           const body = await readBody();
-          const configFile = path.join(ROOT, 'config.json');
+          const configFile = configPath();
           const file = readConfigObject(configFile);
           // current 必须是「当前**生效**的 socialV2」，而不是文件里恰好写着的那一份。
           //
@@ -8661,7 +8676,39 @@ async function main() {
     log(`[session-recover] ${key} 会话损坏，已移除旧会话 ${old}，下次唤醒自动重建`);
     try { await sendToQQ('private:' + String(cfg.ownerQQ || ''), `🛠 ${key} 的 DSH 会话坏了，已自动重建（后续用新会话）`); } catch {}
   }
+  /**
+   * 发送前的策略闸门（D3=B：ask 也拦）。
+   * 判定复用 packages/policy 的规则表，不在这里另写一套条件。
+   * allowAllWhenEmpty=true 时只记录不拦截，避免把"显式放开"的配置误杀。
+   */
+  function policyGateSend(key) {
+    const [kind, id] = String(key).split(':');
+    const action = kind === 'group' ? 'send.group' : 'send.private';
+    const ctx = {
+      action,
+      target: String(id ?? ''),
+      actor: 'agent',
+      allowlist: {
+        private: (cfg.allow?.private || []).map(String),
+        groups: (cfg.allow?.groups || []).map(String)
+      }
+    };
+    let r;
+    try { r = policyEvaluate(ctx); } catch (e) { r = { decision: 'ask', rule: 'policy-error', reason: e.message }; }
+    const openAll = cfg.allowAllWhenEmpty === true
+      && (cfg.allow?.private || []).length === 0 && (cfg.allow?.groups || []).length === 0;
+    const askMode = String(cfg.policy?.askMode || 'deny');
+    const allowed = openAll || r.decision === 'allow' || (r.decision === 'ask' && askMode === 'allow');
+    try { policyLog.append({ action, target: ctx.target, decision: r.decision, rule: r.rule, allowed, openAll }); } catch {}
+    return { allowed, reason: r.reason, decision: r.decision };
+  }
+
   function sendToQQ(key, msg) {
+    const gate = policyGateSend(key);
+    if (!gate.allowed) {
+      log(`[policy] 已拦截发往 ${key}：${gate.reason}（规则 ${gate.decision}）`);
+      return Promise.resolve(false);
+    }
     const assertSendAllowed = captureSendGuard(key);
     const safeMsg = redactKnownTokensOnly(msg);
     const [kind, id] = key.split(':');
@@ -11825,7 +11872,7 @@ ${snapshotTail}`;
     // 睡觉计划：她说了“去睡到某点”，醒来后的第一次唤醒带一句“你刚睡醒”
     let sleepNoteLine = '';
     try {
-      const spPath = `${B}/state/sleep-plan.json`;
+      const spPath = `${GLOBAL_STATE}/sleep-plan.json`;
       const sp = JSON.parse(fs.readFileSync(spPath, 'utf8'));
       if (sp && !sp.used && Number(sp.wakeAt) <= Date.now() + 120000) {
         sleepNoteLine = `【你刚睡醒】你之前说睡到 ${new Date(sp.wakeAt).toLocaleString('zh-CN')}，现在醒了${sp.note ? `；醒来要做：${sp.note}` : ''}。自然地跟主人说一句刚醒的话。` + String.fromCharCode(10, 10);
@@ -11882,7 +11929,7 @@ ${snapshotTail}`;
     }
     if (reason === 'interestStudy') {
       return `${base}【写下你的兴趣】${key}
-你的冲浪兴趣清单现在不是你写的。先读你自己的记忆和笔记：${B}/bili/bili-记忆.md、${B}/记忆库.md、${B}/长记忆.md（用 read/grep 工具；读不了就如实说）。
+你的冲浪兴趣清单现在不是你写的。先读你自己的记忆和笔记：${BILI_DIR}/bili-记忆.md、${PERSONAS_DIR}/记忆库.md、${PERSONAS_DIR}/长记忆.md（用 read/grep 工具；读不了就如实说）。
 然后自己决定你真正感兴趣的主题——想写几个写几个，可以很具体、很私人，不用管主人觉得好不好。用 qq_surf_interests(action="set", topics=[...]) 写进清单。
 不用在聊天里说话，做完用 qq_mark_read 收尾。`;
     }
@@ -11898,7 +11945,7 @@ ${snapshotTail}`;
       return `${base}【自主时间】${key}\n这次不是别人找你，是概率触发了你的自由时间。你自己先照顾一下自己：如果饿了（饱食低）就吃碗白米饭（qq_eat）；然后选一件现在想做的事：读书（qq_read_book）、冲浪（qq_web_surf）、刷视频（qq_video_binge）、整理笔记/写日记（qq_write_file）、换头像/昵称（qq_set_avatar / qq_set_nickname），或者什么都不做安静待着。做完如果有一点想跟主人分享的，就自然说一句；不想说就安静收尾（qq_mark_read）。`;
     }
     if (reason === 'webSurf') {
-      return `${base}【网上冲浪】${key}\n现在是你自己安排的网上冲浪时间。用 qq_web_surf 挑一个你感兴趣的主题（或直接给 topic），它会搜索、读页面、把笔记存到 ${B}/学习。看完挑 1~2 个你真觉得有意思的点，用你自己的话跟主人说说（别像汇报、别罗列）；没意思就安静收尾（qq_mark_read）。`;
+      return `${base}【网上冲浪】${key}\n现在是你自己安排的网上冲浪时间。用 qq_web_surf 挑一个你感兴趣的主题（或直接给 topic），它会搜索、读页面、把笔记存到 ${STUDY_DIR}。看完挑 1~2 个你真觉得有意思的点，用你自己的话跟主人说说（别像汇报、别罗列）；没意思就安静收尾（qq_mark_read）。`;
     }
     if (reason === 'proactiveCheck') {
       return `${base}【主动机会】${key}\n原因：群里已经安静了一段时间，这是一次你可以主动冒泡的机会。\n优先主动开个话题、追问上次没聊完的事、分享一个刚想到的想法；如果一时想不到，可以用 mcp__web-search-safe__web_search 搜一下当前热点/时事/网络热梗，也可以刷刷 B 站（qq_bili_hot 看热门、qq_bili_search 搜你喜欢的词条、qq_bili_video 看一个视频的详情/热评），挑一个你真感兴趣的、用自然的语气分享出来。只要内容自然，就大胆开口；如果实在没话想说，再安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
@@ -12471,7 +12518,7 @@ ${snapshotTail}`;
       state.lastAt = Date.now();
       const hit = currentMode === 'reserved2' && freeTimeWindowOk(Date.now()) && !costGuardActive() && Math.random() < prob;
       state.lastRoll = { at: new Date().toISOString(), hit, prob };
-      try { fs.appendFileSync(`${B}/state/free-time.jsonl`, JSON.stringify({ at: new Date().toISOString(), hit, prob, target: targetKey }) + String.fromCharCode(10)); } catch {}
+      try { fs.appendFileSync(`${GLOBAL_STATE}/free-time.jsonl`, JSON.stringify({ at: new Date().toISOString(), hit, prob, target: targetKey }) + String.fromCharCode(10)); } catch {}
       saveFreeTime(state);
       if (hit) {
         const stc = socialV2.conversations.get(targetKey);
@@ -12530,7 +12577,7 @@ ${snapshotTail}`;
   }
   let webSurfTimer = null;
   function appendSurfLogV2(entry) {
-    try { fs.mkdirSync(`${B}/state`, { recursive: true }); fs.appendFileSync(`${B}/state/surf-log.jsonl`, JSON.stringify({ t: new Date().toISOString(), ...entry }) + String.fromCharCode(10), 'utf8'); } catch {}
+    try { fs.mkdirSync(`${GLOBAL_STATE}`, { recursive: true }); fs.appendFileSync(`${GLOBAL_STATE}/surf-log.jsonl`, JSON.stringify({ t: new Date().toISOString(), ...entry }) + String.fromCharCode(10), 'utf8'); } catch {}
   }
   function scheduleWebSurfV2(delayMs) {
     if (cfg.socialV2?.webSurf?.enabled === false) return;
@@ -13979,7 +14026,7 @@ ${snapshotTail}`;
     const previousWsUrl = cfg.snowluma.wsUrl;
     cfg.snowluma.wsUrl = wsUrl;
     try {
-      const w = persistSnowLumaEndpoint(path.join(ROOT, 'config.json'), {
+      const w = persistSnowLumaEndpoint(configPath(), {
         accessToken: httpToken,
         ...(followEndpoint ? { wsUrl, httpUrl: r.baseUrl } : {})
       });
@@ -14000,7 +14047,7 @@ ${snapshotTail}`;
   /** 只写文件、不动物件（连接已成功时用）。 */
   async function syncTokenToFile() {
     try {
-      const r = persistToken(path.join(ROOT, 'config.json'), cfg.snowluma.accessToken ?? '');
+      const r = persistToken(configPath(), cfg.snowluma.accessToken ?? '');
       // 只记「已写回」，不打印 token 片段：日志会被贴进 issue / 截图，
       // 前 4 个字符同样是凭据的一部分（CWE-532，见 PR #13）。
       if (r.updated) log('🔄 已把当前 token 写回 config.json');
