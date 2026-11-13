@@ -98,6 +98,50 @@ export const CORE_TOOLS = [
  */
 export const PACKAGES = [
   {
+    id: 'activity-time',
+    name: '自主时间',
+    desc: '统一调度「什么时候可以做点什么」：把各扩展能做的事排进一天的空档，到点唤她一次，做什么由她自己决定。',
+    tools: ['qq_activity_now', 'qq_activity_done', 'qq_activity_plan'],
+    services: [{ id: 'activity-time', port: 0 }],
+    // 基础活动不依赖任何扩展：早安、晚安、自由时间、休息提醒。
+    // 它们原本散在桥接里各写死一段提示语，现在统一到这里由调度器安排。
+    baseActivities: [
+      {
+        id: 'morning-greet',
+        label: '说声早安',
+        hint: '发一句简短的早安，一句话就够，别肉麻、别长篇。',
+        window: '07:30-09:30',
+        cooldownMin: 1440,
+        dailyLimit: 1
+      },
+      {
+        id: 'night-greet',
+        label: '说声晚安',
+        hint: '发一句简短的晚安，顺口提醒早点睡。',
+        window: '22:30-23:59',
+        cooldownMin: 1440,
+        dailyLimit: 1
+      },
+      {
+        id: 'free-time',
+        label: '自由时间',
+        hint: '想做什么做什么：整理笔记、发呆、给自己找点乐子都行。',
+        window: '10:00-22:00',
+        cooldownMin: 180,
+        dailyLimit: 2
+      },
+      {
+        id: 'sleep-check',
+        label: '看看要不要睡了',
+        hint: '看看时间，睡不睡由你定；要睡就用 qq_sleep_plan 设好。',
+        window: '23:00-01:00',
+        cooldownMin: 1440,
+        dailyLimit: 1
+      }
+    ],
+    note: '不装它：所有扩展都不会自己动，只在你说话时回应（她仍可能因为想你了主动找你，那是核心行为）。'
+  },
+  {
     id: 'pc',
     name: '电脑助手',
     desc: '在你的电脑上查状态、找文件、读文件、截图、看余额。每次动手前都要你审批。',
@@ -114,6 +158,16 @@ export const PACKAGES = [
     tools: ['qq_web_surf', 'qq_surf_interests', 'qq_search_images'],
     mcpServers: [
       { id: 'mcp-web-search-safe', serverName: 'web-search-safe', script: 'mcp-web-search-safe.js' }
+    ],
+    activities: [
+      {
+        id: 'web-surf',
+        label: '上网逛逛',
+        hint: '用 qq_web_surf 随便看看；遇到有意思的可以记进 qq_surf_interests，下次就记得自己对什么感兴趣。',
+        window: '09:00-22:30',
+        cooldownMin: 180,
+        dailyLimit: 2
+      }
     ]
   },
   {
@@ -123,31 +177,69 @@ export const PACKAGES = [
     tools: [
       'qq_bili_comment', 'qq_bili_favorite', 'qq_bili_hot', 'qq_bili_memory_search',
       'qq_bili_note', 'qq_bili_search', 'qq_bili_video', 'qq_bili_watch'
+    ],
+    activities: [
+      {
+        id: 'bili-browse',
+        label: '刷会儿 B 站',
+        hint: '用 qq_bili_hot 看热门，挑感兴趣的关键词用 qq_bili_search 搜，再挑一两个用 qq_bili_video 看详情；看完用 qq_bili_note 记一句自己的感受。',
+        window: '19:00-23:30',
+        cooldownMin: 240,
+        dailyLimit: 2
+      }
     ]
   },
   {
     id: 'douyin',
     name: '抖音',
     desc: '刷抖音热门、看视频内容。',
-    tools: ['qq_douyin_hot', 'qq_douyin_video', 'qq_douyin_watch']
+    tools: ['qq_douyin_hot', 'qq_douyin_video', 'qq_douyin_watch'],
+    activities: [
+      {
+        id: 'douyin-browse',
+        label: '刷会儿抖音',
+        hint: '用 qq_douyin_hot 看看热门，挑一两个用 qq_douyin_video 看内容。',
+        window: '19:30-23:30',
+        cooldownMin: 300,
+        dailyLimit: 1
+      }
+    ]
   },
   {
     id: 'qzone',
     name: 'QQ 空间',
-    desc: '看好友动态、发说说、点赞、评论、转发。配套一个定时发说说的后台服务。',
+    desc: '看好友动态、发说说、点赞、评论、转发。什么时候发由 activity-time 调度，不再自己定时。',
     tools: [
       'qq_qzone_comment_like', 'qq_qzone_delete', 'qq_qzone_delete_comment', 'qq_qzone_detail',
       'qq_qzone_feeds', 'qq_qzone_forward', 'qq_qzone_like', 'qq_qzone_moments',
       'qq_qzone_publish', 'qq_qzone_reply'
     ],
-    services: [{ id: 'qzone', port: 0, autostart: false }],
-    note: '后台服务不会随开机自启，避免每次开机就往外发内容。'
+    activities: [
+      {
+        id: 'qzone-post',
+        label: '发条说说',
+        hint: '用 qq_qzone_publish 写一条第一人称的碎碎念，短一点、像随口说的；想先看看气氛就用 qq_qzone_feeds 翻翻好友动态。不想发就算了。',
+        window: '10:00-23:00',
+        cooldownMin: 360,
+        dailyLimit: 1
+      },
+      {
+        id: 'qzone-browse',
+        label: '翻翻空间动态',
+        hint: '用 qq_qzone_feeds 看看好友都在干嘛，感兴趣的可以 qq_qzone_like。',
+        window: '12:00-23:00',
+        cooldownMin: 240,
+        dailyLimit: 2
+      }
+    ],
+    note: '发布类动作每天最多一次，且只在调度器给出的时段内由她自己决定发不发。'
   },
   {
     id: 'sleep',
     name: '睡眠计划',
-    desc: '安排作息：几点睡、几点醒，睡着期间不主动发消息。',
-    tools: ['qq_sleep_plan']
+    desc: '安排作息：几点睡、几点醒。睡着期间调度器不会安排任何活动。',
+    tools: ['qq_sleep_plan'],
+    note: '这一项不产生活动，它约束其他活动：睡着时 activity-time 整体静默。'
   },
   {
     id: 'diary',
@@ -159,38 +251,99 @@ export const PACKAGES = [
     id: 'slang',
     name: '语料库',
     desc: '查网络流行语、把新词投稿进语料库。',
-    tools: ['qq_slang_query', 'qq_slang_submit']
+    tools: ['qq_slang_query', 'qq_slang_submit'],
+    activities: [
+      {
+        id: 'slang-learn',
+        label: '学几个新词',
+        hint: '用 qq_slang_query 查查最近流行什么，觉得有意思的用 qq_slang_submit 投稿。',
+        window: '20:00-23:00',
+        cooldownMin: 480,
+        dailyLimit: 1
+      }
+    ]
   },
   {
     id: 'reading',
     name: '读书',
     desc: '读书并保存进度、记读书笔记。',
-    tools: ['qq_read_book', 'qq_save_book']
+    tools: ['qq_read_book', 'qq_save_book'],
+    activities: [
+      {
+        id: 'reading-read',
+        label: '读会儿书',
+        hint: '用 qq_read_book 接着上次的地方读，读完用 qq_save_book 存进度。',
+        window: '20:00-23:30',
+        cooldownMin: 240,
+        dailyLimit: 2
+      }
+    ]
   },
   {
     id: 'ref',
     name: '参考图',
     desc: '收藏参考图、给图写备注，聊天时能翻出来用。',
-    tools: ['qq_ref_gallery', 'qq_ref_note']
+    tools: ['qq_ref_gallery', 'qq_ref_note'],
+    activities: [
+      {
+        id: 'ref-look',
+        label: '看看自己的参考图',
+        hint: '用 qq_ref_gallery 翻翻自己的图，有感觉的可以 qq_ref_note 补一句印象。',
+        window: '15:00-22:00',
+        cooldownMin: 720,
+        dailyLimit: 1
+      }
+    ]
   },
   {
     id: 'eat',
     name: '吃喝',
     desc: '记录吃了什么、饿不饿，影响它的状态和说话方式。',
-    tools: ['qq_eat']
+    tools: ['qq_eat'],
+    activities: [
+      {
+        id: 'eat-meal',
+        label: '吃点东西',
+        hint: '饿了就用 qq_eat 吃点；不饿就算了。',
+        window: '07:00-22:00',
+        cooldownMin: 180,
+        dailyLimit: 3
+      }
+    ]
   },
   {
     id: 'video',
     name: '刷视频',
     desc: '连续刷视频（比单次看一个更进一步）。',
-    tools: ['qq_video_binge']
+    tools: ['qq_video_binge'],
+    activities: [
+      {
+        id: 'video-binge',
+        label: '连着刷会儿视频',
+        hint: '用 qq_video_binge。',
+        window: '20:00-23:30',
+        cooldownMin: 300,
+        dailyLimit: 1
+      }
+    ]
   },
   {
     id: 'imagegen',
     name: '生图',
     desc: '按描述生成图片并发给你。',
     tools: ['qq_generate_image'],
-    note: '调用外部生图服务，会产生额外费用。'
+    activities: [
+      {
+        id: 'image-draw',
+        label: '画张图',
+        hint: '用 qq_generate_image 画一张此刻想到的画面。这会花钱，不想画就直接过。',
+        window: '10:00-23:00',
+        cooldownMin: 1440,
+        dailyLimit: 1,
+        costly: true
+      }
+    ],
+    note: '调用外部生图服务，会产生额外费用。自主画图默认一天最多一次。'
   }
 ];
 
@@ -325,7 +478,31 @@ export function activeMcpServers(state = readState()) {
   return out;
 }
 
-/** 已装扩展涉及的后台服务（目前只有 QQ 空间用到）。 */export function activeServices(state = readState()) {
+/**
+ * 汇总当前所有可被调度的活动。
+ *
+ * 两个来源：
+ *   1. activity-time 自带的基础活动（早安/晚安/自由时间/休息）
+ *   2. 已装扩展声明的活动（刷 B 站、发说说、读书……）
+ *
+ * 没装 activity-time 就返回空 —— 这就是「扩展不自作主张」的落点：
+ * 没有任何调度器时，扩展只是躺在工具清单里的能力，不会自己动。
+ */
+export function allActivities(state = readState()) {
+  const out = [];
+  const at = PACKAGE_BY_ID.get('activity-time');
+  if (at && state.installed?.[at.id]) {
+    for (const a of at.baseActivities || []) out.push({ ...a, pkg: at.id, base: true });
+  }
+  for (const p of PACKAGES) {
+    if (p.id === 'activity-time') continue;
+    if (!state.installed?.[p.id]) continue;
+    for (const a of p.activities || []) out.push({ ...a, pkg: p.id, base: false });
+  }
+  return out;
+}
+
+/** 已装扩展涉及的后台服务（目前只有 activity-time 与 QQ 空间用到）。 */export function activeServices(state = readState()) {
   const out = [];
   for (const p of PACKAGES) {
     if (!state.installed?.[p.id]) continue;

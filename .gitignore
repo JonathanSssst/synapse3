@@ -63,3 +63,6 @@ nul
 
 # 运行时状态：真实位置是 data/state/bridge（legacy 回落目录不入库）
 apps/bridge/state/
+
+# 临时启动脚本（C 盘空间不足期间用来绕开便携版解压）
+/临时启动.cmd

@@ -119,6 +119,12 @@ class Supervisor {
 
   async init() {
     const p = await paths();
+    // 扩展是否已装，决定要不要托管它的后台进程。
+    const installed = (() => {
+      try { return JSON.parse(fs.readFileSync(path.join(p.DATA, 'extensions.json'), 'utf8'))?.installed || {}; }
+      catch { return {}; }
+    })();
+
     this.defs = [
       {
         id: 'bridge', name: 'QQ 桥接', kind: 'managed', port: 3100, healthPath: '/api/status',
@@ -130,15 +136,28 @@ class Supervisor {
         cwd: p.PANEL_ROOT, entry: path.join(p.PANEL_ROOT, 'server.mjs'),
         desc: '只读看板（审计库 / 人设 / 成本）'
       },
-      {
-        id: 'qzone', name: 'QQ 空间', kind: 'managed', port: 0, healthPath: '',
-        cwd: p.QZONE_ROOT, entry: path.join(p.QZONE_ROOT, 'qzone-bot.mjs'),
-        pidFile: path.join(p.QZONE_DATA, 'qzone-bot.pid'),
-        desc: '定时说说 + 评论回复（无常驻端口）'
-      },
+      // QQ 空间不再有自己的定时进程：发不发、什么时候发，交给她在自主时间里决定。
+      // 原来那个常驻进程（qzone-bot.mjs 的循环）正是「扩展自作主张」的典型，已拆掉。
       { id: 'dsh', name: 'DSH 运行时', kind: 'external', port: 0, desc: '第三方 Agent 运行时；端口每次启动都变，由 detect-dsh 指纹探测' },
       { id: 'snowluma', name: 'SnowLuma 网关', kind: 'external', port: 3000, desc: 'OneBot v11 网关，只探测' }
     ];
+
+    // 自主时间调度器：所有「到点做点什么」的唯一来源。
+    // 没装 activity-time 就不托管 —— 那意味着她自己不会找事做，只在你说话时回应。
+    const extRoot = [
+      process.resourcesPath ? path.join(process.resourcesPath, 'app', 'extensions') : null,
+      path.resolve(__dirname, '..', 'extensions')
+    ].filter(Boolean).find((d) => fs.existsSync(d));
+
+    if (installed['activity-time'] && extRoot) {
+      this.defs.push({
+        id: 'activity-time', name: '自主时间', kind: 'managed', port: 0, healthPath: '',
+        cwd: extRoot,
+        entry: path.join(extRoot, 'activity-time', 'scheduler.mjs'),
+        desc: '统一调度自主活动：到点提议一次，做什么由她决定（无常驻端口）'
+      });
+    }
+
     for (const d of this.defs) this.state.set(d.id, { status: 'unknown', restarts: 0 });
     return this.defs;
   }
@@ -212,14 +231,15 @@ class Supervisor {
     return this.defs.map((d) => ({ ...d, ...(this.state.get(d.id) || {}) }));
   }
 
-  // 拉起"必须在线上"的服务（Hub 每次启动都调）。只挑 bridge / panel：
-  // qzone 是定时发说说的，用户不一定希望每次开机就自动往外发内容。
+  // 拉起"必须在线上"的服务（Hub 每次启动都调）：bridge / panel / 自主时间调度器。
+  // 调度器必须跟着起来，否则「装了扩展却从没自己动过」——用户会以为坏了。
+  // QQ 空间不再有自己的进程，所以这里也不再有它。
   // 先 refresh 是为了尊重"已经在跑"的实例 —— 重复起会撞端口。
   // 若端口被外部实例占着，状态里会写明"Hub 未托管"，由人决定要不要切过来。
   async startAutos() {
     const snap = await this.refresh();
     for (const d of snap) {
-      if (!['bridge', 'panel'].includes(d.id)) continue;
+      if (!['bridge', 'panel', 'activity-time'].includes(d.id)) continue;
       if (d.status === 'up' || d.status === 'starting') continue;
       try {
         this.start(d.id, { auto: true });

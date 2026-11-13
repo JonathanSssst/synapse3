@@ -4067,6 +4067,102 @@ server.tool(
   }
 );
 
+// ── 自主时间（activity-time）────────────────────────────────────────────────
+// 这三个工具只做三件事：看看现在能做什么、记一笔做过/不做、调整日程。
+// 具体做什么永远由模型自己决定 —— 工具里不该出现「你应该去刷 B 站」这种话。
+
+server.tool(
+  'qq_activity_now',
+  '看现在有哪些可以做的事（由自主时间调度器安排）。只是选项，不是任务——不做也完全可以。',
+  { key: z.string(), token: z.string() },
+  async ({ key, token }) => {
+    try {
+      const { effectiveActivities, pickDue } = await import('../../extensions/activity-time/scheduler.mjs');
+      const all = effectiveActivities();
+      const due = pickDue();
+      const dueIds = new Set(due.map((d) => d.id));
+      const lines = [];
+      if (due.length) {
+        lines.push('此刻适合做的：');
+        for (const a of due) lines.push(`· ${a.label}（${a.id}）— ${a.hint || '没有额外说明'}`);
+      } else {
+        lines.push('此刻没有特别适合做的事。想做什么都行，或者什么都不做。');
+      }
+      lines.push('');
+      lines.push('全部可选：');
+      for (const a of all) {
+        if (dueIds.has(a.id)) continue;
+        const pkg = a.pkg === 'activity-time' ? '基础' : a.pkg;
+        lines.push(`· ${a.label}（${a.id}｜${pkg}｜时段 ${a.window || '不限'}｜每天最多 ${a.dailyLimit} 次）`);
+      }
+      lines.push('');
+      lines.push('做完（或决定不做）请调 qq_activity_done 记一笔，否则调度器过一会儿还会再问你。');
+      return toolText(lines.join('\n'));
+    } catch (error) {
+      return toolFail(`读取活动失败：${error?.message || error}`);
+    }
+  }
+);
+
+server.tool(
+  'qq_activity_done',
+  '给自主时间记账：刚才那段空档做了什么，或者决定不做。记了调度器就不会反复问同一件事。',
+  {
+    activityId: z.string().optional().describe('活动 id（不填就是「那段空档没做具体的事」）'),
+    action: z.enum(['done', 'skip']).optional().describe('done=做了，skip=不想做（默认 done）'),
+    note: z.string().optional().describe('一句自己的记录，比如看了什么、感觉如何'),
+    key: z.string(),
+    token: z.string()
+  },
+  async ({ activityId, action, note, key, token }) => {
+    try {
+      const s = await import('../../extensions/activity-time/scheduler.mjs');
+      s.recordHandled(activityId, action, note);
+      return toolText(`记下了${activityId ? `（${activityId}）` : ''}：${action === 'skip' ? '这次不做' : '做了'}${note ? `。${note}` : ''}。调度器不会再来问同一件事。`);
+    } catch (error) {
+      return toolFail(`记账失败：${error?.message || error}`);
+    }
+  }
+);
+
+server.tool(
+  'qq_activity_plan',
+  '看或改自己的自主时间表：哪些活动开着、什么时段、每天几次。主人说“以后别刷抖音了”这类话时用它。',
+  {
+    action: z.enum(['list', 'set']).optional().describe('list=查看（默认），set=修改'),
+    activityId: z.string().optional().describe('要改的活动 id'),
+    enabled: z.boolean().optional().describe('开关'),
+    window: z.string().optional().describe('时段，如 19:00-23:00'),
+    dailyLimit: z.number().optional().describe('每天最多几次'),
+    key: z.string(),
+    token: z.string()
+  },
+  async ({ action = 'list', activityId, enabled, window, dailyLimit, key, token }) => {
+    try {
+      const s = await import('../../extensions/activity-time/scheduler.mjs');
+      if (action === 'list') {
+        const all = s.effectiveActivities();
+        if (!all.length) return toolText('现在没有任何可调度的活动（activity-time 可能没装，或所有扩展都关着）。');
+        return toolText(['当前日程：', ...all.map((a) =>
+          `· ${a.label}（${a.id}）｜${a.enabled ? '开' : '关'}｜${a.window || '不限时段'}｜每天 ≤${a.dailyLimit}｜间隔 ≥${a.cooldownMin} 分钟`
+        )].join('\n'));
+      }
+      if (!activityId) return toolFail('set 需要 activityId');
+      const patch = {};
+      if (typeof enabled === 'boolean') patch.enabled = enabled;
+      if (window) patch.window = window;
+      if (Number.isFinite(Number(dailyLimit))) patch.dailyLimit = Number(dailyLimit);
+      s.updateOverride(activityId, patch);
+      const after = s.effectiveActivities().find((a) => a.id === activityId);
+      return toolText(after
+        ? `改好了：${after.label}｜${after.enabled ? '开' : '关'}｜${after.window || '不限时段'}｜每天 ≤${after.dailyLimit}`
+        : `改好了（${activityId}），但没在活动表里找到它，可能对应扩展已经卸了。`);
+    } catch (error) {
+      return toolFail(`改日程失败：${error?.message || error}`);
+    }
+  }
+);
+
 // 启动时把「注册了几个 / 因为什么没注册」写进 stderr。MCP 走 stdio，
 // stdout 是协议通道，一个字节都不能占 —— 日志只能走 stderr。
 {

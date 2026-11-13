@@ -80,6 +80,13 @@ async function bootstrap() {
   }
 
   const claimed = [];
+  // activity-time 是后加的默认扩展：已经在用的机器不会重走「全装」那一步，
+  // 不补的话升级后她会突然不再自己安排任何事，而用户什么都没改。
+  if (text.includes('id: mcp-snowluma') && !state.installed?.['activity-time']) {
+    e.install('activity-time', { source: 'builtin', version: '0.1.0' });
+    claimed.push('activity-time');
+  }
+
   for (const p of e.PACKAGES) {
     if (!p.mcpServers?.length) continue;
     if (state.installed?.[p.id]) continue;

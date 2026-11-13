@@ -5055,6 +5055,27 @@ async function main() {
           }
           return;
         }
+        // ── 自主活动触发（供 activity-time 扩展调用）─────────────────────────
+        // 这里只做一件事：把「现在适合做某事」这件事告诉会话状态，然后叫醒她。
+        // 做不做、怎么做，全由模型自己判断 —— 调度器不该替她决定行为。
+        if (req.method === 'POST' && url.pathname === '/api/activity/wake') {
+          const body = await readBody();
+          const activityId = String(body?.activityId ?? '').trim();
+          const label = String(body?.label ?? '').trim();
+          const hint = String(body?.hint ?? '').trim();
+          const key = String(body?.key ?? `private:${String(cfg.ownerQQ ?? '')}`).trim();
+          if (!activityId || !label) { sendJson({ ok: false, error: '缺少 activityId / label' }, 400); return; }
+          if (!/^(private|group):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式不合法' }, 400); return; }
+          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '当前不在对话模式，未唤醒' }, 409); return; }
+          const st = getSocialV2State(key);
+          st.activityCandidate = { activityId, label, hint, at: Date.now() };
+          saveSocialV2State();
+          const reason = `activity:${activityId}`;
+          scheduleWakeV2(key, reason);
+          log(`[activity] 触发「${label}」→ ${key}`);
+          sendJson({ ok: true, key, reason, label });
+          return;
+        }
         // ── 白名单可视化编辑（写 config.json + 热更新内存） ───────────────────
         if (req.method === 'GET' && url.pathname === '/api/whitelist') {
           sendJson({ allow: cfg.allow ?? { private: [], groups: [] }, deny: cfg.deny ?? { private: [], groups: [] }, ownerQQ: cfg.ownerQQ ?? null });
@@ -12029,6 +12050,19 @@ ${snapshotTail}`;
       return `${base}【认识自己】${key}
 主人给了你几张参考图。用 qq_ref_gallery 取图，一张张看，然后用 qq_ref_note(file, impression, tags, title) 给每张写下你对自己的印象/描述和短标签（标签用于以后画图挑图，如：夜景、白裙、特写、烟火、校服、海边）。不用在聊天里说话，做完用 qq_mark_read 收尾。`;
     }
+    // 统一自主活动入口：activity-time 调度器触发，reason 形如 activity:<id>。
+    // 这里**只说明「现在有一段空档、这些事可以做」**，不指定做什么，也不催她做。
+    if (String(reason).startsWith('activity:')) {
+      const cand = st.activityCandidate;
+      const fresh = cand && (Date.now() - Number(cand.at || 0) < 30 * 60000);
+      const what = fresh
+        ? `调度器觉得这段时间适合「${cand.label}」。${cand.hint ? String(cand.hint) : ''}\n`
+        : '';
+      return `${base}【自主时间】${key}\n${what}这不是别人找你，是日程里的一段空档。做什么、做多久、或者干脆不做，都你自己决定：
+· 想看看现在还有哪些可选，调 qq_activity_now；
+· 做了、或者决定不做，都用 qq_activity_done 记一笔 —— 不记的话调度器过一会还会再来问你一次；
+· 什么都不想做就安静待着，用 qq_mark_read 收尾，不用解释，也没人催你。`;
+    }
     if (reason === 'sleepCheck') {
       return `${base}【休息时间】${key}
 到休息时间了。这次由你自己决定：现在睡、再待一会儿、还是今晚不睡。要睡就用 qq_sleep_plan（如 until="08:00" 或 minutes=30）设好再跟主人说一声，语气自然、别像汇报；不想睡就继续做点自己的事，或者安静待着（qq_mark_read）。`;
@@ -12258,7 +12292,9 @@ ${snapshotTail}`;
     anyMessage: 50,
     replyCheck: 40,
     timeout: 30,
-    proactiveCheck: 20
+    proactiveCheck: 20,
+    // 自主活动是所有唤醒原因里最低的：有人找你永远优先于「她想找点事做」。
+    activity: 10
   };
 
   // 唤醒原因可能带子类型（如 keyword:小鲸鱼、speaker:昵称），取冒号前的基名计算优先级。
@@ -12270,7 +12306,7 @@ ${snapshotTail}`;
   // 与「未读消息」无关的唤醒原因（定时器/引导）。这些原因在会话繁忙时被暂存后，
   // 不能用「unread 里还有没有对应 seq」来判断是否还要补发 —— 那一轮很可能已经把
   // 未读全部标读了，结果就是 timeout 定时器被静默丢掉、会话停在无定时器的静默态。
-  const TIMER_WAKE_REASONS = new Set(['timeout', 'replyCheck', 'proactiveCheck', 'bootstrap', 'admin']);
+  const TIMER_WAKE_REASONS = new Set(['timeout', 'replyCheck', 'proactiveCheck', 'bootstrap', 'admin', 'activity']);
   function isTimerWakeReason(reason) {
     return TIMER_WAKE_REASONS.has(String(reason ?? '').split(':')[0]);
   }
@@ -12521,7 +12557,25 @@ ${snapshotTail}`;
     return at;
   }
   let biliTimer = null;
+  /**
+   * 自主活动总闸。
+   *
+   * 默认 'external'：桥接不再自己定时「到点做点什么」。刷 B 站、上网、自由时间、
+   * 休息提醒、早安晚安这些全部交给 activity-time 扩展统一调度 —— 由它在合适的时间
+   * 触发一次唤醒，再由模型自己决定做不做、做什么。
+   *
+   * 为什么必须收拢：这些定时器散在桥接里，每个都写死了一段「现在该干什么」的提示语，
+   * 扩展装没装它都照跑，于是「扩展只提供能力、不自作主张」这条原则在实现上就破了。
+   *
+   * 设成 'legacy' 可以回退到旧的内置定时器（排查对比用）。
+   * 注意：这不影响「有人找你 → 叫醒你」这类对话驱动的唤醒，那是核心行为。
+   */
+  function activitySchedulerExternal() {
+    return cfg.socialV2?.activityScheduler !== 'legacy';
+  }
+
   function scheduleBiliCheckV2(delayMs) {
+    if (activitySchedulerExternal()) return;
     if (cfg.socialV2?.biliSchedule?.enabled === false) return;
     if (biliTimer) { clearTimeout(biliTimer); biliTimer = null; }
     const st = loadBiliSchedule();
@@ -12596,6 +12650,7 @@ ${snapshotTail}`;
     return at;
   }
   function scheduleFreeTimeV2(delayMs) {
+    if (activitySchedulerExternal()) return;
     if (cfg.socialV2?.freeTime?.enabled === false) return;
     if (freeTimeTimer) { clearTimeout(freeTimeTimer); freeTimeTimer = null; }
     const st = loadFreeTime();
@@ -12672,6 +12727,7 @@ ${snapshotTail}`;
     try { fs.mkdirSync(`${GLOBAL_STATE}`, { recursive: true }); fs.appendFileSync(`${GLOBAL_STATE}/surf-log.jsonl`, JSON.stringify({ t: new Date().toISOString(), ...entry }) + String.fromCharCode(10), 'utf8'); } catch {}
   }
   function scheduleWebSurfV2(delayMs) {
+    if (activitySchedulerExternal()) return;
     if (cfg.socialV2?.webSurf?.enabled === false) return;
     if (webSurfTimer) { clearTimeout(webSurfTimer); webSurfTimer = null; }
     const st = loadWebSurfState();
@@ -12749,6 +12805,7 @@ ${snapshotTail}`;
     return best || now + 3600000;
   }
   function scheduleSleepCheckV2(delayMs) {
+    if (activitySchedulerExternal()) return;
     if (cfg.socialV2?.sleepCheck?.enabled === false) return;
     if (sleepCheckTimer) { clearTimeout(sleepCheckTimer); sleepCheckTimer = null; }
     const st = loadSleepCheckState();
@@ -12801,6 +12858,7 @@ ${snapshotTail}`;
     return best;
   }
   function scheduleDailyGreetingsV2() {
+    if (activitySchedulerExternal()) return;
     if (cfg.socialV2?.dailyGreeting?.enabled === false) return;
     if (greetingTimer) { clearTimeout(greetingTimer); greetingTimer = null; }
     const next = nextGreeting();

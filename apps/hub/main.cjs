@@ -234,17 +234,27 @@ ipcMain.handle('hub:ext:refresh', async () => extensions.refresh());
  * 装/卸之后必须重启桥接：工具清单是它启动时注册给模型的，不重启等于白装。
  * DSH 那边还要重新读 MCP 配置才能看到新 server，那一步只能由用户重启 DSH —— 前端要提示。
  */
-async function afterExtChange(res) {
+async function afterExtChange(res, action) {
   let bridge = 'skipped';
   if (sup) {
+    // 装/卸会改变「该托管哪些服务」：activity-time 装了才有调度器进程。
+    // 卸载时先在旧表里把它停掉，再重建表，否则进程会一直挂着。
+    if (action === 'uninstall') { try { sup.stop(res.id); } catch {} }
+    try { await sup.init(); } catch {}
+    if (action === 'install' && sup.defs?.some((d) => d.id === res.id)) {
+      try { sup.start(res.id, { auto: true }); } catch (e) {
+        pushLog({ id: 'hub', stream: 'hub', line: `启动 ${res.id} 失败：${e.message}` });
+      }
+    }
     try { await sup.restart('bridge'); bridge = 'ok'; }
     catch (e) { bridge = String(e?.message || e); }   // 外部实例占用时是预期内的失败
+    if (win && !win.isDestroyed()) win.webContents.send('hub:services', sup.snapshot());
   }
   return { ...res, bridge, needsDshRestart: true };
 }
 
-ipcMain.handle('hub:ext:install', async (_e, id) => afterExtChange(await extensions.install(String(id))));
-ipcMain.handle('hub:ext:uninstall', async (_e, id) => afterExtChange(await extensions.uninstall(String(id))));
+ipcMain.handle('hub:ext:install', async (_e, id) => afterExtChange(await extensions.install(String(id)), 'install'));
+ipcMain.handle('hub:ext:uninstall', async (_e, id) => afterExtChange(await extensions.uninstall(String(id)), 'uninstall'));
 
 ipcMain.handle('hub:logs', async (_e, filter) => {
   const id = filter?.id;

@@ -78,6 +78,10 @@ for (const f of fs.readdirSync(panelSrc)) {
   cp(path.join(panelSrc, f), path.join(panelDst, f));
 }
 cp(path.join(ROOT, 'apps', 'qzone'), path.join(OUT, 'app', 'qzone'));
+// 扩展自带的后台进程（目前只有 activity-time 调度器）。
+// 放 app/extensions 而不是 packages：它是可执行代码，不是共享库，
+// 而且要和 bridge 一样靠 ../../../packages 解析到 resources/packages。
+cp(path.join(ROOT, 'apps', 'extensions'), path.join(OUT, 'app', 'extensions'));
 
 // ── 4. panel-ui 构建产物 ───────────────────────────────────────────────────
 const uiDist = path.join(ROOT, 'apps', 'panel-ui', 'dist');
@@ -113,6 +117,7 @@ if (!allowMissingUi) must(path.join(OUT, 'app', 'panel-ui', 'dist', 'index.html'
 must(path.join(OUT, 'packages', 'paths', 'index.mjs'), 'paths 包');
 must(path.join(OUT, 'packages', 'extensions', 'index.mjs'), 'extensions 注册表');
 must(path.join(OUT, 'packages', 'extensions', 'market.mjs'), 'extensions 市场模块');
+must(path.join(OUT, 'app', 'extensions', 'activity-time', 'scheduler.mjs'), 'activity-time 调度器');
 
 // 依赖自检：光看"node_modules 目录存在"不够，符号链接复制失败时目录可能还在但里面是空的。
 // 逐个核对 package.json 里声明的生产依赖，缺一个就让构建直接失败，
