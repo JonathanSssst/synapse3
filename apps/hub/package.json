@@ -9,8 +9,8 @@
   "scripts": {
     "start": "electron .",
     "start:win": "start.cmd",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check services.cjs && node --check bridge-console.cjs && node --check firstrun.cjs",
-    "build": "electron-builder --win portable --x64",
+    "check": "node scripts/preflight.mjs",
+    "build": "node scripts/preflight.mjs && electron-builder --win portable --x64",
     "build:dir": "electron-builder --dir"
   },
   "devDependencies": {

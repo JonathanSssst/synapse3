@@ -19,6 +19,7 @@ function switchTab(tab) {
   $$('.tab').forEach((s) => s.classList.add('hidden'));
   $(`#tab-${tab}`).classList.remove('hidden');
   if (tab === 'approvals') refreshPending();
+  if (tab === 'extensions') refreshExtensions();
   if (tab === 'setup') { refreshSetup(); refreshCheck(); }
   if (tab === 'logs') refreshLogs();
 }
@@ -303,6 +304,99 @@ async function detectDshFromForm(btn) {
   }
 }
 
+// ── 扩展 ───────────────────────────────────────────────────────────────────
+const EXT = { builtin: [], market: [], profile: '', coreTools: 0, indexError: '', fetchedAt: '' };
+
+function renderExtensions() {
+  const box = $('#ext-list');
+  box.innerHTML = '';
+
+  const all = [...EXT.builtin, ...EXT.market];
+  const installed = all.filter((p) => p.installed).length;
+  $('#ext-count').textContent = all.length
+    ? `已装 ${installed} / ${all.length} 项能力 · 核心工具 ${EXT.coreTools} 个常驻`
+    : '读取中…';
+
+  const note = $('#ext-note');
+  if (EXT.indexError) {
+    note.classList.remove('hidden');
+    note.className = 'banner';
+    note.textContent = `连不上扩展市场（${EXT.indexError}）。内置扩展不受影响，照常可用。`;
+  } else {
+    note.classList.add('hidden');
+  }
+
+  if (!all.length) {
+    const el = document.createElement('div');
+    el.className = 'empty';
+    el.textContent = '没有可用的扩展。';
+    box.appendChild(el);
+    return;
+  }
+
+  for (const p of all) {
+    const el = document.createElement('div');
+    el.className = `ext${p.installed ? ' on' : ''}`;
+    const tag = p.source === 'remote' ? '<span class="tag remote">市场</span>' : '<span class="tag">内置</span>';
+    el.innerHTML = `
+      <div class="ext-head">
+        <div class="ext-name">${escapeHtml(p.name)}${tag}
+          <span class="tag tools">${p.toolCount ?? p.tools?.length ?? 0} 个工具</span>
+        </div>
+      </div>
+      <div class="ext-desc">${escapeHtml(p.desc || '')}</div>
+      <div class="ext-tools">${escapeHtml((p.tools || []).join(' · '))}</div>
+      <div class="ext-note-line">${escapeHtml(p.note || '')}</div>
+      <div class="ext-acts"></div>`;
+
+    const acts = el.querySelector('.ext-acts');
+    const btn = document.createElement('button');
+    btn.className = p.installed ? 'btn danger' : 'btn primary';
+    btn.textContent = p.installed ? '卸下' : '装上';
+    btn.onclick = () => extAction(p.id, p.installed ? 'uninstall' : 'install', btn);
+    acts.appendChild(btn);
+    box.appendChild(el);
+  }
+
+  $('#ext-foot').textContent = EXT.profile
+    ? `DSH profile：${EXT.profile}　·　装完要重启一次 DSH 才会读到新工具`
+    : '';
+}
+
+async function refreshExtensions({ refresh = false } = {}) {
+  try {
+    const r = refresh ? await window.hub.extRefresh() : await window.hub.extList();
+    EXT.builtin = r.builtin || [];
+    EXT.market = r.market || [];
+    EXT.profile = r.profile || '';
+    EXT.coreTools = r.coreTools || 0;
+    EXT.indexError = r.indexError || '';
+    EXT.fetchedAt = r.fetchedAt || '';
+    renderExtensions();
+  } catch (e) {
+    $('#ext-count').textContent = `读取失败：${e.message || e}`;
+  }
+}
+
+async function extAction(id, kind, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = kind === 'install' ? '安装中…' : '卸载中…';
+  try {
+    const r = kind === 'install' ? await window.hub.extInstall(id) : await window.hub.extUninstall(id);
+    const parts = [];
+    if (r.bridge === 'ok') parts.push('桥接已重启');
+    else if (r.bridge && r.bridge !== 'skipped') parts.push(`桥接未重启：${r.bridge}`);
+    if (r.needsDshRestart) parts.push('重启一次 DSH 才会生效');
+    toast(`${kind === 'install' ? '已装上' : '已卸下'}${parts.length ? '，' + parts.join('；') : ''}`);
+    await refreshExtensions();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = label;
+    toast(`失败：${e.message || e}`);
+  }
+}
+
 // ── 体检 ───────────────────────────────────────────────────────────────────
 async function refreshCheck() {
   const box = $('#check-list');
@@ -398,6 +492,7 @@ $('#log-clear').addEventListener('click', () => { $('#log-box').innerHTML = ''; 
 $('#open-panel').addEventListener('click', () => window.hub.openPanel().catch((e) => toast(e.message)));
 $('#reveal-data').addEventListener('click', () => window.hub.reveal('data').catch((e) => toast(e.message)));
 $('#autostart').addEventListener('change', (e) => toggleAutoStart(e.target.checked));
+$('#ext-refresh').addEventListener('click', () => refreshExtensions({ refresh: true }));
 $('#setup-save').addEventListener('click', saveSetup);
 $('#setup-form').addEventListener('click', (e) => {
   const det = e.target.closest('[data-detect]');

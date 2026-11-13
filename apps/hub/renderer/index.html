@@ -19,6 +19,7 @@
     <nav>
       <button class="nav" data-tab="services">服务</button>
       <button class="nav" data-tab="approvals">审批 <span id="badge" class="badge hidden">0</span></button>
+      <button class="nav" data-tab="extensions">扩展</button>
       <button class="nav" data-tab="setup">配置</button>
       <button class="nav" data-tab="logs">日志</button>
     </nav>
@@ -43,6 +44,20 @@
       <header><h1>审批</h1><p class="sub">与在 QQ 里回复「通过 / 拒绝」是同一条逻辑，两边结果一致。</p></header>
       <div id="pending-list" class="pending-list"></div>
       <div class="empty" id="pending-empty">当前没有挂起的审批或提问。</div>
+    </section>
+
+    <section class="tab hidden" id="tab-extensions">
+      <header>
+        <h1>扩展</h1>
+        <p class="sub">裸机只带收发消息、主动唤醒和人设。下面这些装了才会出现在它的能力里，卸了就消失。</p>
+      </header>
+      <div class="ext-bar">
+        <span class="ext-count" id="ext-count">…</span>
+        <button class="ghost" id="ext-refresh">刷新市场</button>
+      </div>
+      <div id="ext-note" class="banner hidden"></div>
+      <div id="ext-list" class="ext-list"></div>
+      <div class="ext-foot" id="ext-foot"></div>
     </section>
 
     <section class="tab hidden" id="tab-setup">

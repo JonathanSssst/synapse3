@@ -13,12 +13,9 @@ directories:
   buildResources: assets
 
 files:
-  - main.cjs
-  - preload.cjs
-  - services.cjs
-  - bridge-console.cjs
-  - firstrun.cjs
-  - resolve-packages.cjs
+  # 用 *.cjs 而不是逐个列文件名：这层目录里的每个 .cjs 都是主进程要 require 的，
+  # 漏一个就是启动即崩（`Cannot find module './xxx.cjs'`），而且只有打包后才暴露。
+  - "*.cjs"
   - renderer/**/*
   - assets/*.png
   - package.json

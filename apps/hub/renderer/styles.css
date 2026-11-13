@@ -180,3 +180,37 @@ select {
   cursor: pointer; font-size: 12px; color: var(--muted); padding: 6px 0; user-select: none;
 }
 .checkup-wrap[open] > summary { margin-bottom: 8px; }
+
+/* ── 扩展 ──────────────────────────────────────────────────────────────── */
+.ext-bar {
+  display: flex; align-items: center; gap: 12px; max-width: 820px; margin-bottom: 12px;
+}
+.ext-count { font-size: 12px; color: var(--muted); flex: 1; }
+.ext-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 10px; max-width: 820px;
+}
+.ext {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 6px;
+}
+/* 已装的加一条左侧色带，扫一眼就知道哪些在生效 */
+.ext.on { border-left: 3px solid #639922; padding-left: 12px; }
+.ext-head { display: flex; align-items: flex-start; gap: 8px; }
+.ext-name { font-size: 13px; font-weight: 600; color: #1f1f1c; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ext-desc { font-size: 12px; color: #3a3934; }
+.ext-tools {
+  font-size: 10.5px; color: #9b998f; line-height: 1.5; word-break: break-all;
+  border-top: 1px dashed #eceae3; padding-top: 5px;
+}
+.ext-note-line { font-size: 11px; color: var(--warn); }
+.ext-note-line:empty { display: none; }
+.ext-acts { display: flex; justify-content: flex-end; padding-top: 2px; }
+
+.tag {
+  font-size: 10px; font-weight: 400; color: #6f6d66; background: #f1efe9;
+  border-radius: 4px; padding: 1px 5px;
+}
+.tag.tools { color: #185fa5; background: #eef4fa; }
+.tag.remote { color: #854f0b; background: #fdf3e4; }
+.ext-foot { max-width: 820px; margin-top: 12px; font-size: 11px; color: #9b998f; }

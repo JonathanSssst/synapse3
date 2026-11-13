@@ -26,8 +26,14 @@ const log = (m) => console.log(`[build-hub] ${m}`);
 function rmrf(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch {} }
 function cp(src, dst) {
   if (!fs.existsSync(src)) { log(`跳过（不存在）：${path.relative(ROOT, src)}`); return false; }
+  // src 可能是符号链接（apps/bridge/node_modules 就指着旧树）。dereference 只影响
+  // 「复制什么」，cpSync 开头的类型检查仍按 lstat 判——链接会被当成「非目录」，
+  // 一旦目标已存在就抛 ERR_FS_CP_NON_DIR_TO_DIR。所以先解成真实路径再复制。
+  const real = fs.realpathSync(src);
   fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.cpSync(src, dst, { recursive: true, dereference: true });
+  // 合并复制会把上一版多出来的文件留在目标里，行为难预测；先清干净。
+  try { fs.rmSync(dst, { recursive: true, force: true }); } catch {}
+  fs.cpSync(real, dst, { recursive: true, dereference: true });
   return true;
 }
 function must(p, label) {
@@ -83,7 +89,7 @@ if (!fs.existsSync(path.join(uiDist, 'index.html'))) {
 }
 
 // ── 5. packages（必须放安装根）─────────────────────────────────────────────
-for (const p of ['paths', 'policy', 'llm-adapter']) {
+for (const p of ['paths', 'policy', 'llm-adapter', 'extensions']) {
   cp(path.join(ROOT, 'packages', p), path.join(OUT, 'packages', p));
 }
 
@@ -105,6 +111,8 @@ must(path.join(OUT, 'app', 'bridge', 'src', 'bridge.js'), '桥接入口');
 must(path.join(OUT, 'app', 'panel-server', 'server.mjs'), '面板入口');
 if (!allowMissingUi) must(path.join(OUT, 'app', 'panel-ui', 'dist', 'index.html'), '面板前端');
 must(path.join(OUT, 'packages', 'paths', 'index.mjs'), 'paths 包');
+must(path.join(OUT, 'packages', 'extensions', 'index.mjs'), 'extensions 注册表');
+must(path.join(OUT, 'packages', 'extensions', 'market.mjs'), 'extensions 市场模块');
 
 // 依赖自检：光看"node_modules 目录存在"不够，符号链接复制失败时目录可能还在但里面是空的。
 // 逐个核对 package.json 里声明的生产依赖，缺一个就让构建直接失败，

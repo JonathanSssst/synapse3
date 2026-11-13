@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('hub', {
   configSave: (values) => ipcRenderer.invoke('hub:configSave', values),
   detectDsh: () => ipcRenderer.invoke('hub:detectDsh'),
   autostart: (v) => ipcRenderer.invoke('hub:autostart', v),
+
+  extList: (opts) => ipcRenderer.invoke('hub:ext:list', opts),
+  extRefresh: () => ipcRenderer.invoke('hub:ext:refresh'),
+  extInstall: (id) => ipcRenderer.invoke('hub:ext:install', id),
+  extUninstall: (id) => ipcRenderer.invoke('hub:ext:uninstall', id),
   logs: (filter) => ipcRenderer.invoke('hub:logs', filter),
   paths: () => ipcRenderer.invoke('hub:paths'),
 

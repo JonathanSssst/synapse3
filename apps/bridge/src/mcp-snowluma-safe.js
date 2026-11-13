@@ -23,6 +23,7 @@ import { z } from 'zod';
 // 在 MCP 里拦会连「安全拒绝理由」都拿不到，反而让模型无法把话说清楚。
 import { SENSITIVE_RE } from './sensitive.js';
 import { serializeModelData } from './qq-model-view.js';
+import * as ext from '../../../packages/extensions/index.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -358,14 +359,26 @@ const TOOL_CONFIG_FLAGS = {
   qq_set_sticker_remark: 'setStickerRemark',
 };
 const disabledTools = [];
+const registeredTools = [];
+let extState = { installed: {} };
+try {
+  extState = ext.readState();
+} catch (e) {
+  process.stderr.write(`[extensions] 读安装状态失败，按「全部扩展未安装」处理：${e?.message ?? e}\n`);
+}
 {
   const registerTool = server.tool.bind(server);
   server.tool = (name, ...rest) => {
     const flag = TOOL_CONFIG_FLAGS[name];
-    if (flag && cfg.socialV2?.tools?.[flag] === false) {
-      disabledTools.push(`${name}(${flag})`);
+    // 两道闸门取交集：老的单工具开关（用户可能在配置里单独关过），
+    // 以及新的扩展分层（没装对应扩展就整组不注册）。
+    const legacyOff = Boolean(flag) && cfg.socialV2?.tools?.[flag] === false;
+    if (!ext.toolEnabled(name, { installed: extState.installed, legacyFlagFalse: legacyOff })) {
+      const owner = ext.ownerOf(name) ?? '未归属';
+      disabledTools.push(legacyOff ? `${name}(${flag})` : `${name}@${owner}`);
       return undefined;
     }
+    registeredTools.push(name);
     return registerTool(name, ...rest);
   };
 }
@@ -4053,5 +4066,26 @@ server.tool(
     } catch (error) { return toolFail(`设置共享失败：${error?.message || error}`); }
   }
 );
+
+// 启动时把「注册了几个 / 因为什么没注册」写进 stderr。MCP 走 stdio，
+// stdout 是协议通道，一个字节都不能占 —— 日志只能走 stderr。
+{
+  const installedIds = Object.keys(extState.installed || {});
+  const byPkg = {};
+  for (const t of registeredTools) {
+    const o = ext.ownerOf(t) || '未归属';
+    byPkg[o] = (byPkg[o] || 0) + 1;
+  }
+  const coreN = byPkg.core || 0;
+  const extN = registeredTools.length - coreN;
+  process.stderr.write(
+    `[extensions] 已注册 ${registeredTools.length} 个工具（核心 ${coreN} + 扩展 ${extN}）；` +
+    `已装扩展 ${installedIds.length ? installedIds.join('/') : '无'}；跳过 ${disabledTools.length} 个\n`
+  );
+  const { unknown } = ext.validate(registeredTools.concat(disabledTools.map((d) => d.split(/[( @]/)[0])));
+  if (unknown.length) {
+    process.stderr.write(`[extensions] ⚠ 未归属的工具（已按不注册处理）：${unknown.join(', ')}\n`);
+  }
+}
 
 await server.connect(new StdioServerTransport());

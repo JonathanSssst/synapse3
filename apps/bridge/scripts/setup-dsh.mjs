@@ -5,8 +5,9 @@
 //   1. 安装两套 agent preset：qq-chat、qq-chat-v2
 //      （DSH 0.1.7 机制：作为 qq-agent-presets bundle 的 patch 层插入
 //        @deepseek-ai/dsh-agent-preset 行；~/.dsh/.agent-presets/ 目录已不再被读取）
-//   2. 在 DSH profile 的 cordis.patch.yml 中挂载三个 MCP server：
-//      mcp-snowluma / mcp-snowluma-host / mcp-web-search-safe
+//   2. 在 DSH profile 的 cordis.patch.yml 中挂载 MCP server：
+//      核心必挂 mcp-snowluma / mcp-snowluma-host；
+//      扩展的 MCP（如电脑助手 pcops、联网搜索 web-search-safe）按安装状态决定挂不挂
 //   3. 在 profile package.json 中注册两个 bundle：qq-mode-console、qq-agent-presets
 //
 // 用法：
@@ -20,11 +21,12 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
 import { BUNDLE_DIR, PRESETS, buildPatches, patchFileFor } from './build-agent-preset-patches.mjs';
+import * as ext from '../../../packages/extensions/index.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-const PROFILE = process.argv[2] || 'web';
+const PROFILE = process.argv.slice(2).find((a) => !a.startsWith('--')) || 'web';
 
 // A profile is a directory name, never a path (same boundary as DSH itself).
 if (PROFILE === '.' || PROFILE === '..' || PROFILE === 'node_modules'
@@ -122,21 +124,36 @@ function yamlSingleQuote(s) {
   return `'${String(s).replace(/'/g, "''")}'`;
 }
 
-// 由桥接托管的 MCP 条目 id：脚本对这三个 id 拥有所有权，可安全地按 id 增删。
-const MANAGED_MCP_IDS = ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe'];
+// 核心永远挂：聊天本身没有它就跑不起来。
+const FIXED_MCP = [
+  { id: 'mcp-snowluma', serverName: 'snowluma', script: path.join(REPO_ROOT, 'src', 'mcp-snowluma-safe.js'), toolCallTimeoutMs: 725000 },
+  { id: 'mcp-snowluma-host', serverName: 'snowluma-host', script: path.join(REPO_ROOT, 'src', 'mcp-host-server.js') },
+];
+
+// 所有权名单必须覆盖「所有声明过的 id」，而不是「当前装了的 id」。
+// 否则卸载扩展后，DSH 配置里那条旧条目没人认领，会一直挂着一个连不上的 server。
+// 所以是函数而不是常量：状态文件里的账本每次都要重读。
+function managedMcpIds(state = ext.readState()) {
+  return [...FIXED_MCP.map((x) => x.id), ...ext.declaredMcpIds(state)];
+}
 
 function mcpEntries() {
   const node = process.execPath;
-  const servers = {
-    'mcp-snowluma': { serverName: 'snowluma', script: path.join(REPO_ROOT, 'src', 'mcp-snowluma-safe.js'), toolCallTimeoutMs: 725000 },
-    'mcp-snowluma-host': { serverName: 'snowluma-host', script: path.join(REPO_ROOT, 'src', 'mcp-host-server.js') },
-    'mcp-web-search-safe': { serverName: 'web-search-safe', script: path.join(REPO_ROOT, 'src', 'mcp-web-search-safe.js') },
-  };
+  const state = ext.readState();
+  // 只有装了对应扩展，才把它的 MCP server 挂进 DSH。
+  const active = ext.activeMcpServers(state).map((m) => ({
+    id: m.id,
+    serverName: m.serverName,
+    // 内置扩展的脚本在仓库 src/ 下；远端扩展自带代码，脚本在 data/extensions/<id>/ 下。
+    script: m.dir ? path.join(m.dir, m.script) : path.join(REPO_ROOT, 'src', m.script),
+    toolCallTimeoutMs: m.toolCallTimeoutMs,
+  }));
+  const servers = [...FIXED_MCP, ...active];
   let out = '# === qq-bridge MCP BEGIN ===\n';
   out += '# 由 scripts/setup-dsh.mjs 维护；这段区块会被整体替换，请勿手工编辑内部条目。\n';
-  for (const [id, s] of Object.entries(servers)) {
+  for (const s of servers) {
     out += `- insert:\n`;
-    out += `    - id: ${id}\n`;
+    out += `    - id: ${s.id}\n`;
     out += `      name: '@deepseek-ai/dsh-mcp-client'\n`;
     out += `      config:\n`;
     out += `        serverName: ${s.serverName}\n`;
@@ -167,6 +184,7 @@ function prepareCordisPatch() {
   try { doc = yaml.load(lines.join('\n')) ?? []; }
   catch (error) { fatal(`failed to parse ${patchFile}; file unchanged: ${error.message}`); }
   if (!Array.isArray(doc)) fatal(`${patchFile} must contain a YAML array; file unchanged`);
+  const owned = new Set(managedMcpIds());
   let removed = 0;
   const kept = [];
   for (const operation of doc) {
@@ -176,7 +194,7 @@ function prepareCordisPatch() {
     if (!Object.hasOwn(operation, 'insert')) { kept.push(operation); continue; }
     if (!Array.isArray(operation.insert)) fatal(`insert must be an array in ${patchFile}; file unchanged`);
     const entries = operation.insert.filter((entry) => {
-      if (!MANAGED_MCP_IDS.includes(entry?.id)) return true;
+      if (!owned.has(entry?.id)) return true;
       removed++;
       return false;
     });
@@ -200,7 +218,8 @@ function patchCordis({ patchFile, original, text, removed }) {
   } finally {
     fs.rmSync(temporary, { force: true });
   }
-  log(`cordis.patch.yml: MCP 条目已同步（清理旧条目 ${removed} 条，写入 ${MANAGED_MCP_IDS.length} 条）`);
+  const written = FIXED_MCP.length + ext.activeMcpServers().length;
+  log(`cordis.patch.yml: MCP 条目已同步（清理旧条目 ${removed} 条，写入 ${written} 条）`);
 }
 
 /**
@@ -349,6 +368,22 @@ function autoInstallProfileBundles() {
   } else {
     log(`dsh plugin --profile ${PROFILE} install 返回退出码 ${r.status}（若 DSH 启动报 bundle 解析失败，请手动重跑该命令）`);
   }
+}
+
+// 调试开关：只打印当前会写进 DSH 的 MCP 区块，不碰任何文件。
+// 排查「扩展装了但工具没出现」时，先看这里有没有预期的 server。
+if (process.argv.includes('--print-mcp')) {
+  process.stdout.write(mcpEntries());
+  process.exit(0);
+}
+
+// 装/卸扩展后只需要重写 MCP 区块：preset、bundle 链接、profile package.json 都没变。
+// 走完整流程会顺带 spawn `dsh plugin install`，在控制台里点一个开关不该等那么久，
+// 也不该在用户没预期的时候动配置文件。
+if (process.argv.includes('--sync-mcp-only')) {
+  const r = prepareCordisPatch();
+  patchCordis(r);
+  process.exit(0);
 }
 
 // Validate the existing YAML before changing any presets or configuration.

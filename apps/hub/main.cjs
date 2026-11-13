@@ -40,6 +40,7 @@ trace(`启动模式=${START_HIDDEN ? '开机自启（隐藏窗口）' : '手动�
 const { Supervisor } = require('./services.cjs');
 const bridgeConsole = require('./bridge-console.cjs');
 const firstrun = require('./firstrun.cjs');
+const extensions = require('./extensions.cjs');
 const { loadPaths } = require('./resolve-packages.cjs');
 trace('本地模块 require 完成');
 
@@ -226,6 +227,25 @@ ipcMain.handle('hub:detectDsh', async () => ({ baseUrl: await firstrun.detectDsh
 ipcMain.handle('hub:autostart', async (_e, v) => (
   typeof v === 'boolean' ? autoStartSet(v) : autoStartGet()
 ));
+ipcMain.handle('hub:ext:list', async (_e, opts) => extensions.list(opts || {}));
+ipcMain.handle('hub:ext:refresh', async () => extensions.refresh());
+
+/**
+ * 装/卸之后必须重启桥接：工具清单是它启动时注册给模型的，不重启等于白装。
+ * DSH 那边还要重新读 MCP 配置才能看到新 server，那一步只能由用户重启 DSH —— 前端要提示。
+ */
+async function afterExtChange(res) {
+  let bridge = 'skipped';
+  if (sup) {
+    try { await sup.restart('bridge'); bridge = 'ok'; }
+    catch (e) { bridge = String(e?.message || e); }   // 外部实例占用时是预期内的失败
+  }
+  return { ...res, bridge, needsDshRestart: true };
+}
+
+ipcMain.handle('hub:ext:install', async (_e, id) => afterExtChange(await extensions.install(String(id))));
+ipcMain.handle('hub:ext:uninstall', async (_e, id) => afterExtChange(await extensions.uninstall(String(id))));
+
 ipcMain.handle('hub:logs', async (_e, filter) => {
   const id = filter?.id;
   return logs.filter((l) => !id || l.id === id).slice(-500);
@@ -273,6 +293,17 @@ if (!gotLock) {
     createTray();
     createWindow();
     trace(`createWindow 返回，win=${win ? 'ok' : 'null'}`);
+    // 必须在桥接启动之前跑：桥接启动时按扩展状态决定注册哪些工具。
+    // 同时它会把 DSH 里早就配着的 MCP（如 mcp-pcops）认领成「已装」，
+    // 否则第一次同步就会把用户一直在用的能力悄悄摘掉。
+    try {
+      const b = await extensions.bootstrap();
+      if (b.claimed.length) {
+        pushLog({ id: 'hub', stream: 'hub', line: `识别到本机既有扩展：${b.claimed.join('、')}（profile ${b.profile}）` });
+      }
+    } catch (e) {
+      pushLog({ id: 'hub', stream: 'hub', line: `扩展状态识别失败：${e.message}` });
+    }
     try { await bootSupervisor(); } catch (e) { pushLog({ id: 'hub', stream: 'hub', line: `编排初始化失败：${e.message}` }); }
     if (win && !win.isDestroyed()) {
       win.webContents.send('hub:services', sup ? sup.snapshot() : []);
