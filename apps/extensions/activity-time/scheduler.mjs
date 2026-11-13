@@ -157,7 +157,7 @@ async function wakeBridge(activity, targetKey) {
     signal: AbortSignal.timeout(10000)
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+  if (!res.ok) return { ok: false, status: res.status, error: body?.error || `HTTP ${res.status}` };
   return { ok: true, key };
 }
 
@@ -209,9 +209,18 @@ async function tick() {
 
   // 随机挑一个：让「今天做什么」不是每天同一个顺序，但同一天不会连环追问。
   const pick = due[Math.floor(Math.random() * due.length)];
-  const r = await wakeBridge(pick);
+  let r;
+  try {
+    r = await wakeBridge(pick);
+  } catch (e) {
+    // fetch 的 message 只有一句 "fetch failed"，真因在 cause 里（ECONNREFUSED / 超时）。
+    log(`提议「${pick.label}」连不上桥接：${e?.cause?.code || e?.cause?.message || e?.message || e}`);
+    return;
+  }
   if (!r.ok) {
-    log(`提议「${pick.label}」失败：${r.error}`);
+    // 409 = 环境没准备好（不在对话模式、或她正在睡）。这不是故障，
+    // 每分钟记一条只会把日志刷满，静默跳过就好。
+    if (r.status !== 409) log(`提议「${pick.label}」失败：${r.error}`);
     return;
   }
 
@@ -273,8 +282,11 @@ async function main() {
   writeJson(lockFile, process.pid);
 
   const loop = async () => {
-    try { await tick(); } catch (e) { log(`tick 异常：${e?.message ?? e}`); }
-    setTimeout(loop, Math.max(15000, Number(loadConf().tickMs) || 60000)).unref?.();
+    try { await tick(); } catch (e) { log(`tick 异常：${e?.message ?? e}${e?.cause?.code ? `（${e.cause.code}）` : ''}`); }
+    // 不能用 .unref()：这个定时器是进程唯一的「保持存活」来源，
+    // unref 之后事件循环一空，进程就 exit 0 了 —— 表现是服务列表里
+    // 「自主时间：未运行，exit 0」，看起来像正常退出，其实什么都没干。
+    setTimeout(loop, Math.max(15000, Number(loadConf().tickMs) || 60000));
   };
   loop();
 
